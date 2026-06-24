@@ -1,0 +1,209 @@
+# Aitana Platform v6 -- Backend standalone Cloud Build configuration
+#
+# ============================================================================
+# DELETE THIS FILE IF YOUR FORK ONLY SERVES A CHAT UI.
+#
+# This file deploys a SECOND Cloud Run service (`aitana-v6-backend`,
+# IAM-protected) in addition to the public `aitana-v6-frontend` service that
+# the root cloudbuild.yaml deploys. The backend is ALSO present as a sidecar
+# inside `aitana-v6-frontend` -- intentional duplication to keep chat-path
+# latency on the loopback hop while still offering a standalone endpoint for
+# non-UI callers.
+#
+# You only need the standalone service if at least one of these is real for
+# your fork:
+#   - Channel webhooks (Telegram / email / WhatsApp) hitting a non-Firebase
+#     auth path
+#   - External A2A crawlers (Gemini Enterprise) following the rewritten `url`
+#     field on your agent card
+#   - External MCP callers reaching your backend as an MCP server
+#   - Internal SA-to-SA Cloud Run callers without Firebase sessions
+#
+# If none of those apply: delete this file, disable the trigger
+# `trigger-<env>-aitana-v6-backend` in your Cloud Build project, and remove
+# the standalone service + its Terraform refs. Full recipe + symptom table:
+# docs/ops/deployment-models.md
+# ============================================================================
+#
+# Branch-based deployment: main -> dev, test -> test, prod -> production
+# Substitutions managed by Terraform (see multivac-aitana infrastructure repo).
+
+substitutions:
+  _SERVICE_NAME: aitana-v6-backend
+  _REGION: terraform_managed
+  _ARTIFACT_REGISTRY_REPO_URL_CLIENT: terraform_managed
+  _PROJECT_ID: terraform_managed
+  _FIREBASE_BUCKET: '${_PROJECT_ID}.firebasestorage.app'
+  # Comma-separated allowlist of service-account emails permitted to call
+  # /api/admin/seed-platform-skills. Terraform sets this to the Cloud Build
+  # SA for each environment. See docs/ops/platform-skills.md.
+  _ADMIN_SEED_ALLOWED_SAS: terraform_managed
+  # G17 (template-fork-ergonomics.md): include the workshop demo skills?
+  # `true` for the platform's own deploys; sanitize-for-template flips
+  # it to `false` so forks start with a clean slate. See platform_seed.py.
+  _INCLUDE_DEMO_SKILLS: 'true'
+  # Platform admin email that owns seeded skills. Required by
+  # platform_seed._resolve_owner_email() in non-LOCAL_MODE — an empty
+  # value fails the seed loudly rather than shipping Aitana-owned skills.
+  # The platform's own deploys set the real value via the Cloud Build
+  # TRIGGER substitution (kept out of source); forks set their own.
+  _PLATFORM_OWNER_EMAIL: ''
+  # #6 (template-cloudbuild-hardening.md): Cloud Build log bucket.
+  # Defaults to a project-local bucket so forks don't hit the
+  # Aitana-owned multivac-deploy-aitana-logging-bucket. The bucket is
+  # created by scripts/bootstrap-gcp-project.sh during initial setup.
+  _LOG_BUCKET: 'gs://${_PROJECT_ID}-cloudbuild-logs'
+
+tags: ['${_PROJECT_ID}', '${_SERVICE_NAME}']
+
+options:
+  logging: GCS_ONLY
+logsBucket: '${_LOG_BUCKET}'
+
+steps:
+  # --- Build backend image ---
+  - name: 'gcr.io/cloud-builders/docker'
+    id: build-backend
+    dir: backend
+    args:
+      - 'build'
+      - '--build-arg'
+      - 'FIREBASE_BUCKET=${_FIREBASE_BUCKET}'
+      - '--build-arg'
+      - 'GOOGLE_CLOUD_PROJECT=${_PROJECT_ID}'
+      - '--build-arg'
+      - 'GOOGLE_CLOUD_LOCATION=${_REGION}'
+      - '-t'
+      - '${_ARTIFACT_REGISTRY_REPO_URL_CLIENT}/${_SERVICE_NAME}/backend:${BRANCH_NAME}'
+      - '.'
+
+  # --- Push image ---
+  - name: 'gcr.io/cloud-builders/docker'
+    id: push-backend
+    waitFor: ['build-backend']
+    args: ['push', '${_ARTIFACT_REGISTRY_REPO_URL_CLIENT}/${_SERVICE_NAME}/backend:${BRANCH_NAME}']
+
+  # --- Deploy to Cloud Run (single container) ---
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    waitFor: ['push-backend']
+    args:
+      - 'run'
+      - 'deploy'
+      - '${_SERVICE_NAME}'
+      - '--region=${_REGION}'
+      - '--project=${_PROJECT_ID}'
+      - '--platform=managed'
+      - '--no-allow-unauthenticated'         # internal API, SA-invoked only
+      - '--max-instances=3'
+      - '--image=${_ARTIFACT_REGISTRY_REPO_URL_CLIENT}/${_SERVICE_NAME}/backend:${BRANCH_NAME}'
+      - '--port=8080'
+      - '--memory=4Gi'
+      - '--cpu=2'
+      # Secrets
+      - '--set-secrets=GOOGLE_API_KEY=GOOGLE_API_KEY:latest'
+      - '--set-secrets=ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest'
+      - '--set-secrets=TELEGRAM_BOT_TOKEN=TELEGRAM_BOT_TOKEN:latest'
+      - '--set-secrets=TWILIO_ACCOUNT_SID=TWILIO_ACCOUNT_SID:latest'
+      - '--set-secrets=TWILIO_AUTH_TOKEN=TWILIO_AUTH_TOKEN:latest'
+      - '--set-secrets=MAILGUN_API_KEY=MAILGUN_API_KEY:latest'
+      - '--set-secrets=MAILGUN_WEBHOOK_SECRET=MAILGUN_WEBHOOK_SECRET:latest'
+      - '--set-secrets=AGENT_ENGINE_ID=AGENT_ENGINE_ID:latest'
+      # Env vars
+      - '--set-env-vars=TWILIO_WHATSAPP_NUMBER=whatsapp:+14155238886'
+      - '--set-env-vars=GOOGLE_CLOUD_PROJECT=${_PROJECT_ID}'
+      - '--set-env-vars=GOOGLE_CLOUD_LOCATION=${_REGION}'
+      - '--set-env-vars=GOOGLE_GENAI_USE_VERTEXAI=True'
+      - '--set-env-vars=ADK_ARTIFACT_BUCKET=${_PROJECT_ID}-artifacts'
+      - '--set-env-vars=LOGS_BUCKET_NAME=${_PROJECT_ID}-aitana-v6-logs'
+      # Observability
+      - '--set-env-vars=GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY=true'
+      - '--set-env-vars=OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true'
+      # Admin seed allowlist (Cloud Build SA must be in this list to call
+      # /api/admin/seed-platform-skills from the seed step below).
+      # G18 (template-fork-ergonomics.md): `^|^` delimiter override — value
+      # is a comma-separated SA list; default `--set-env-vars=` parser treats
+      # comma as KEY=VAL separator and silently corrupts the second entry.
+      # Rule for ALL future env-var additions: use `^|^` for any var whose
+      # value could ever contain a comma. Single values are safe.
+      - "--set-env-vars=^|^ADMIN_SEED_ALLOWED_SAS=${_ADMIN_SEED_ALLOWED_SAS}"
+      - "--set-env-vars=_INCLUDE_DEMO_SKILLS=${_INCLUDE_DEMO_SKILLS}"
+      # Single email value, no comma — plain --set-env-vars is safe.
+      - "--set-env-vars=PLATFORM_OWNER_EMAIL=${_PLATFORM_OWNER_EMAIL}"
+
+  # --- Post-deploy smoke: standalone backend is IAM-protected, so use an
+  # identity token from the Cloud Build SA. Cloud Build SA needs run.invoker
+  # on this service (already granted via Terraform common tfvars line ~304).
+  # Laptop equivalent: `./scripts/smoke-deployed.sh dev backend` (see
+  # docs/ops/deployed-urls.md for URL list and verification).
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: smoke-backend
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        set -e
+        URL=$(gcloud run services describe ${_SERVICE_NAME} \
+          --project=${_PROJECT_ID} --region=${_REGION} \
+          --format='value(status.url)')
+        echo "Smoking $${URL}/health (authenticated)"
+        # #13 (template-cloudbuild-hardening.md): mint the identity token
+        # via the GCE metadata server, NOT `gcloud auth print-identity-token`.
+        # The gcloud command fails under a user-managed Cloud Build SA
+        # (which post-2024 projects MUST use) with "No identity token can
+        # be obtained from the current credentials." Metadata server works
+        # under any SA. `include_email=true` puts the email claim on the
+        # token so the backend's admin-allowlist check succeeds (#14).
+        TOKEN=$(curl -sS --max-time 10 \
+          -H "Metadata-Flavor: Google" \
+          "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=$${URL}&format=full&include_email=true")
+        # Cold-start tolerance (2026-06-11): /health on a fresh revision
+        # can take ~10-30s while ADK initialises + the Vertex Agent Engine
+        # client warms. Retry with backoff before failing the build.
+        code=000
+        for attempt in 1 2 3; do
+          code=$(curl -sS -o /tmp/body -w '%{http_code}' --max-time 60 \
+            -H "Authorization: Bearer $${TOKEN}" "$${URL}/health") || code=000
+          [ "$${code}" = "200" ] && break
+          echo "  retry $${attempt}/3 (got $${code})"
+          sleep 5
+        done
+        body=$(head -c 200 /tmp/body)
+        if [ "$${code}" = "200" ]; then
+          echo "OK   /health -> 200 body=$${body}"
+        else
+          echo "FAIL /health -> $${code} body=$${body}"
+          exit 1
+        fi
+
+  # --- Non-fatal platform-skill seed. Populates the five default skills
+  # with ownerId=aitana-platform so every tenant has something to run.
+  # Idempotent (skips already-present names) so re-runs are free. Never
+  # fails the build — a seed hiccup is not worth blocking a good deploy.
+  # Docs: docs/ops/platform-skills.md
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: seed-platform-skills
+    waitFor: ['smoke-backend']
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        set +e
+        URL=$(gcloud run services describe ${_SERVICE_NAME} \
+          --project=${_PROJECT_ID} --region=${_REGION} \
+          --format='value(status.url)')
+        # #13 (template-cloudbuild-hardening.md): metadata-server identity
+        # token, NOT gcloud auth print-identity-token. See smoke-backend
+        # step above for the rationale. include_email=true is what makes
+        # the backend's admin-allowlist check pass (#14).
+        TOKEN=$(curl -sS --max-time 10 \
+          -H "Metadata-Flavor: Google" \
+          "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=$${URL}&format=full&include_email=true")
+        code=$(curl -sS -o /tmp/seed -w '%{http_code}' --max-time 60 \
+          -X POST -H "Authorization: Bearer $${TOKEN}" \
+          "$${URL}/api/admin/seed-platform-skills") || code=000
+        body=$(head -c 300 /tmp/seed)
+        echo "seed-platform-skills -> $${code} body=$${body}"
+        exit 0
+
+timeout: '1800s'

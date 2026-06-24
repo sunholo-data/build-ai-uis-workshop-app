@@ -1,0 +1,322 @@
+# Aitana Platform v6 -- Cloud Build configuration
+# Branch-based deployment: main -> dev, test -> test, prod -> production
+# Multi-container Cloud Run: frontend (main) + backend (sidecar)
+#
+# Substitutions are managed by Terraform (see infrastructure repo)
+
+substitutions:
+  _SERVICE_NAME: aitana-v6-frontend
+  _REGION: terraform_managed
+  _BUILD_FOLDER: .
+  _ARTIFACT_REGISTRY_REPO_URL_CLIENT: terraform_managed
+  _PROJECT_ID: terraform_managed
+  _FIREBASE_BUCKET: '${_PROJECT_ID}.firebasestorage.app'
+  # Firebase helper image is built by v5's trigger-dev-firebase and tagged per-env
+  # (dev/test/prod), not per-branch. v6 main -> dev; test/prod triggers override.
+  _FIREBASE_TAG: dev
+  # Admin seed allowlist — SA emails permitted to call
+  # /api/admin/seed-platform-skills. Terraform-managed per env.
+  _ADMIN_SEED_ALLOWED_SAS: terraform_managed
+  # Sprint 1.7 M4: separate-origin sandbox proxy URL for MCP App iframes.
+  # Baked into the Next.js bundle at build time (NEXT_PUBLIC_*).
+  # See _MCP_SANDBOX_URL below — moved to the fork-ergonomics block.
+  # Cloud Build log bucket. Defaults to a project-local bucket so fresh
+  # forks don't hit the Aitana-owned multivac-deploy-aitana-logging-bucket.
+  # Run scripts/bootstrap-gcp-project.sh to create it before first deploy.
+  # Terraform can override per env (docs/ops/gotchas.md #6).
+  _LOG_BUCKET: 'gs://${_PROJECT_ID}-cloudbuild-logs'
+  # Channel feature flags — set to 'true' to wire the Secret Manager secret
+  # and activate the channel. Leave 'false' (default) and the secret need
+  # not exist; the channel simply won't start (docs/ops/gotchas.md #5).
+  _ENABLE_ANTHROPIC: 'true'
+  _ENABLE_TELEGRAM: 'false'
+  _ENABLE_WHATSAPP: 'false'
+  _ENABLE_EMAIL: 'false'
+  # Platform skill owner email. Set to the admin email for this deployment.
+  # Forks MUST override this — leaving it empty causes the backend to refuse
+  # to start rather than silently using the Aitana fallback (item #3).
+  _PLATFORM_OWNER_EMAIL: ''
+  # MCP sandbox iframe URL. Leave blank to disable MCP Apps gracefully
+  # (item #12). Forks set this to their own deployed mcp-sandbox URL.
+  _MCP_SANDBOX_URL: ''
+  # G17 (template-fork-ergonomics.md): include the 7-skill workshop demo
+  # bundle (code-assistant, data-extractor, document-analyst,
+  # general-assistant, web-researcher, workspace-demo, workspace-demo-interactive)?
+  # Default `true` here because the platform repo's own deploys depend on
+  # those skills (workshop + dev fixtures). The sanitize-for-template
+  # pipeline flips this to `false` for the public template so a freshly
+  # forked clean-slate deploy doesn't ship with seven inherited skills
+  # the fork author never asked for.
+  _INCLUDE_DEMO_SKILLS: 'true'
+
+tags: ['${_PROJECT_ID}', '${_SERVICE_NAME}']
+
+options:
+  logging: GCS_ONLY
+logsBucket: '${_LOG_BUCKET}'
+
+steps:
+  # --- Firebase rules ---
+  - name: '${_ARTIFACT_REGISTRY_REPO_URL_CLIENT}/sunholo-llmops/firebase:${_FIREBASE_TAG}'
+    waitFor: ['-']
+    id: 'deploy-firebase-rules'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        firebase &&
+        firebase -P ${_PROJECT_ID} --json deploy --only firestore:rules,firestore:indexes --force
+
+  # --- Get Firebase config from Secret Manager ---
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'get-firebase-config'
+    waitFor: ['-']
+    entrypoint: 'bash'
+    args:
+      - './get-firebase-config.sh'
+    env:
+      - '_PROJECT_ID=$_PROJECT_ID'
+
+  # --- Build frontend ---
+  # docker_args contains `--build-arg KEY` (no values). We populate the env
+  # from .env.local here so Docker can resolve each --build-arg KEY against
+  # the build environment. Cannot use `source .env.local` — that runs the
+  # values through the shell parser and chokes on unquoted spaces /
+  # ampersands (e.g. NEXT_PUBLIC_BRAND_APP_NAME=Acme Energy parses as
+  # `KEY=Our` then runs `New Energy` as a command). The while-read loop
+  # splits on the first `=` only and treats the rest as literal — safe for
+  # arbitrary values including spaces, `&`, `=`, quotes, etc.
+  # See get-firebase-config.sh for the matching producer change.
+  - name: 'gcr.io/cloud-builders/docker'
+    id: build-frontend
+    waitFor: ['get-firebase-config']
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        while IFS='=' read -r key val; do
+          [[ -z "$$key" || "$${key:0:1}" == "#" ]] && continue
+          export "$$key=$$val"
+        done < .env.local
+        ARGS=$$(cat /workspace/docker_args)
+        docker build $$ARGS \
+          --build-arg NEXT_PUBLIC_MCP_SANDBOX_URL=${_MCP_SANDBOX_URL} \
+          -t ${_ARTIFACT_REGISTRY_REPO_URL_CLIENT}/${_SERVICE_NAME}/ui:${BRANCH_NAME} \
+          -f frontend/Dockerfile \
+          frontend/
+
+  # --- Build backend ---
+  - name: 'gcr.io/cloud-builders/docker'
+    id: build-backend
+    waitFor: ['-']
+    dir: ${_BUILD_FOLDER}/backend
+    args:
+      - 'build'
+      - '--build-arg'
+      - 'FIREBASE_BUCKET=${_FIREBASE_BUCKET}'
+      - '--build-arg'
+      - 'GOOGLE_CLOUD_PROJECT=${_PROJECT_ID}'
+      - '--build-arg'
+      - 'GOOGLE_CLOUD_LOCATION=${_REGION}'
+      - '-t'
+      - '${_ARTIFACT_REGISTRY_REPO_URL_CLIENT}/${_SERVICE_NAME}/backend:${BRANCH_NAME}'
+      - '.'
+
+  # --- Push images ---
+  - name: 'gcr.io/cloud-builders/docker'
+    id: push-frontend
+    waitFor: ['build-frontend']
+    args: ['push', '${_ARTIFACT_REGISTRY_REPO_URL_CLIENT}/${_SERVICE_NAME}/ui:${BRANCH_NAME}']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: push-backend
+    waitFor: ['build-backend']
+    args: ['push', '${_ARTIFACT_REGISTRY_REPO_URL_CLIENT}/${_SERVICE_NAME}/backend:${BRANCH_NAME}']
+
+  # --- Deploy to Cloud Run (multi-container) ---
+  # Uses bash so channel secrets can be conditionally included based on
+  # _ENABLE_* substitution flags (see docs/ops/gotchas.md #5).
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: bash
+    waitFor: ['push-frontend', 'push-backend']
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        # Always-required sidecar secrets (ADK agent engine)
+        SECRETS="AGENT_ENGINE_ID=AGENT_ENGINE_ID:latest,DOCPARSE_API_KEY=DOCPARSE_API_KEY:latest"
+        # AI model key — almost always needed; set _ENABLE_ANTHROPIC=false to skip
+        if [ "${_ENABLE_ANTHROPIC}" = "true" ]; then
+          SECRETS="$${SECRETS},ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest"
+        fi
+        # Channel secrets — only wired when the channel is enabled
+        if [ "${_ENABLE_TELEGRAM}" = "true" ]; then
+          SECRETS="$${SECRETS},TELEGRAM_BOT_TOKEN=TELEGRAM_BOT_TOKEN:latest"
+        fi
+        if [ "${_ENABLE_WHATSAPP}" = "true" ]; then
+          SECRETS="$${SECRETS},TWILIO_ACCOUNT_SID=TWILIO_ACCOUNT_SID:latest,TWILIO_AUTH_TOKEN=TWILIO_AUTH_TOKEN:latest"
+        fi
+        if [ "${_ENABLE_EMAIL}" = "true" ]; then
+          SECRETS="$${SECRETS},MAILGUN_API_KEY=MAILGUN_API_KEY:latest,MAILGUN_WEBHOOK_SECRET=MAILGUN_WEBHOOK_SECRET:latest"
+        fi
+        gcloud run deploy ${_SERVICE_NAME} \
+          --region=${_REGION} \
+          --project=${_PROJECT_ID} \
+          --platform=managed \
+          --allow-unauthenticated \
+          --max-instances=3 \
+          --session-affinity \
+          --container=main \
+          --image=${_ARTIFACT_REGISTRY_REPO_URL_CLIENT}/${_SERVICE_NAME}/ui:${BRANCH_NAME} \
+          --port=8080 \
+          --memory=2Gi \
+          --cpu=1 \
+          --set-env-vars=BACKEND_URL=http://127.0.0.1:1956 \
+          --container=sidecar \
+          --image=${_ARTIFACT_REGISTRY_REPO_URL_CLIENT}/${_SERVICE_NAME}/backend:${BRANCH_NAME} \
+          --memory=4Gi \
+          --cpu=2 \
+          --startup-probe=tcpSocket.port=1956,periodSeconds=5,failureThreshold=24,timeoutSeconds=5 \
+          --set-secrets="$${SECRETS}" \
+          --set-env-vars=TWILIO_WHATSAPP_NUMBER=whatsapp:+14155238886 \
+          --set-env-vars=GOOGLE_CLOUD_PROJECT=${_PROJECT_ID} \
+          --set-env-vars=GOOGLE_CLOUD_LOCATION=${_REGION} \
+          --set-env-vars=GOOGLE_GENAI_USE_VERTEXAI=True \
+          --set-env-vars=ADK_ARTIFACT_BUCKET=${_PROJECT_ID}-artifacts \
+          --set-env-vars=LOGS_BUCKET_NAME=${_PROJECT_ID}-aitana-v6-logs \
+          --set-env-vars=GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY=true \
+          --set-env-vars=OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true \
+          --set-env-vars='^|^ADMIN_SEED_ALLOWED_SAS=${_ADMIN_SEED_ALLOWED_SAS}' \
+          --set-env-vars=PLATFORM_OWNER_EMAIL=${_PLATFORM_OWNER_EMAIL} \
+          --set-env-vars=_INCLUDE_DEMO_SKILLS=${_INCLUDE_DEMO_SKILLS} \
+          --set-env-vars=RAG_DOCUMENTS_ENABLED=true \
+          --set-env-vars=ENABLE_A2A_INVOCATION=true \
+          --set-env-vars=A2A_INVOCATION_REQUIRE_AUTH=false \
+          --set-env-vars=PUBLIC_BASE_URL=https://aitana-v6-frontend-66pa3y5xnq-ew.a.run.app \
+          --set-env-vars=ENABLE_A2A_FILE_INPUT=true \
+          --set-env-vars=A2A_AGENT_DOCUMENTS_BUCKET=gs://aitana-public-bucket/demo/
+        # G18 (template-fork-ergonomics.md): `^|^` delimiter override on
+        # ADMIN_SEED_ALLOWED_SAS above — its value is a comma-separated list
+        # of SA emails, and gcloud's default `--set-env-vars=` parser treats
+        # comma as KEY=VAL separator. Without `^|^` the second SA silently
+        # becomes a phantom env var with a malformed value; deploy "succeeds"
+        # and the seeder rejects every legit caller. See `gcloud topic escaping`.
+        # Rule for ALL future env-var additions: use `^|^` for any value
+        # that could contain a comma. Single values are safe.
+        #
+        # G45-PARSE-FIX (2026-06-08): the comment block USED to live between
+        # OTEL_... and ADMIN_SEED above with `#` lines breaking the `\` line
+        # continuation. Bash treated every --set-env-vars AFTER the comment
+        # as a separate command (`command not found`), silently dropping
+        # ADMIN_SEED + PLATFORM_OWNER + _INCLUDE_DEMO_SKILLS + RAG_DOCUMENTS
+        # + the G45 A2A vars from the deploy. New A2A vars exposed the bug
+        # because they're load-bearing (G45 invocation 404'd until env vars
+        # actually landed). Moved comment to AFTER the gcloud command so it
+        # can't break continuation. NEVER add `# comment` lines between
+        # `\`-continued lines of a shell command in cloudbuild.yaml.
+
+  # --- Post-deploy smoke: fail the build if any critical endpoint is not 200 ---
+  # Per CLAUDE.md: no feature lands with manual-only verification. This step
+  # protects against sidecar-silently-not-running bugs like FE-BRINGUP-1
+  # (see docs/ops/deployed-urls.md for background).
+  #
+  # Cold-start handling (2026-06-11): post-deploy traffic hits a freshly
+  # rolled-out Cloud Run revision that may need ~10-30s to load the Next.js
+  # server + initialise the sidecar. The single-shot --max-time 20 was
+  # flagging healthy deploys as FAILURE just because the first / hit
+  # before the container was warm. Strategy now:
+  #   1. Warm-up loop: poll `/` until 200 or 90s, no fail on individual
+  #      misses. This pays the cold-start tax outside the assertion path.
+  #   2. Per-request timeout bumped from 20s to 60s so a sluggish
+  #      first-token-ish endpoint doesn't false-trip the assertion.
+  #   3. One retry per assertion on a 0/5xx — collapses to PASS on the
+  #      common case of a transient cold-start hiccup mid-smoke.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: smoke-deployed
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        set -e
+        URL=$(gcloud run services describe ${_SERVICE_NAME} \
+          --project=${_PROJECT_ID} --region=${_REGION} \
+          --format='value(status.url)')
+        echo "Smoking $${URL}"
+
+        # Warm-up: hit `/` until it returns 200 or 90s elapses. Bail on
+        # warm-up if even that fails — something more than cold-start is wrong.
+        echo "Warming up (max 90s)..."
+        deadline=$(($${SECONDS} + 90))
+        while [ $${SECONDS} -lt $${deadline} ]; do
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$${URL}/") || code=000
+          if [ "$${code}" = "200" ]; then
+            echo "  warm after $${SECONDS}s"
+            break
+          fi
+          sleep 3
+        done
+        if [ "$${code}" != "200" ]; then
+          echo "FAIL warm-up never reached 200 (last code=$${code})"
+          exit 1
+        fi
+
+        # One-retry helper. probe <path> <expected-code> [auth-token]
+        probe() {
+          local path="$1" expect="$2" header="$3"
+          local code
+          for attempt in 1 2; do
+            code=$(curl -sS -o /tmp/body -w '%{http_code}' --max-time 60 \
+              ${header:+-H "$${header}"} "$${URL}$${path}") || code=000
+            if [ "$${code}" = "$${expect}" ]; then
+              echo "OK   $${path} -> $${code}"
+              return 0
+            fi
+            if [ "$${attempt}" = "1" ]; then
+              echo "  retry $${path} (got $${code}, want $${expect})"
+              sleep 2
+            fi
+          done
+          local body=$(head -c 200 /tmp/body)
+          echo "FAIL $${path} -> $${code} (expected $${expect}) body=$${body}"
+          return 1
+        }
+
+        fail=0
+        # Public endpoints — expect 200
+        for path in "/" "/api/health" "/api/proxy/health" "/api/proxy/api/skills/marketplace"; do
+          probe "$${path}" "200" "" || fail=1
+        done
+        # Auth-protected — expect 401 without token (not Next 404 — FE-BRINGUP-1 guard)
+        for path in "/api/proxy/api/skills" "/api/proxy/api/auth/whoami"; do
+          probe "$${path}" "401" "" || fail=1
+        done
+        exit $${fail}
+
+  # --- Platform-skill seed (via sidecar proxy). Idempotent. Fails build on error.
+  # Uses the GCE metadata-server identity endpoint — this works under any SA
+  # (user-managed or default), unlike `gcloud auth print-identity-token`.
+  # include_email=true is required: the backend allowlist check needs the email
+  # claim (see docs/ops/gotchas.md #13 #14 and docs/ops/platform-skills.md).
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: seed-platform-skills
+    waitFor: ['smoke-deployed']
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        URL=$(gcloud run services describe ${_SERVICE_NAME} \
+          --project=${_PROJECT_ID} --region=${_REGION} \
+          --format='value(status.url)')
+        TOKEN=$(curl -sf \
+          "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=$${URL}&format=full&include_email=true" \
+          -H "Metadata-Flavor: Google")
+        code=$(curl -sS -o /tmp/seed -w '%{http_code}' --max-time 60 \
+          -X POST -H "Authorization: Bearer $${TOKEN}" \
+          "$${URL}/api/proxy/api/admin/seed-platform-skills") || code=000
+        body=$(head -c 300 /tmp/seed)
+        echo "seed-platform-skills -> $${code} body=$${body}"
+        if [ "$${code}" != "200" ]; then
+          echo "ERROR: seed step returned $${code} — marketplace will be empty" >&2
+          exit 1
+        fi

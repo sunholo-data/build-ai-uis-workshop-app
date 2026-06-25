@@ -11,6 +11,10 @@ sudo apt-get install -y -qq make
 echo "==> Installing uv (Python package manager)…"
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
+# Put uv on the default PATH for every shell (login, non-login, and `make dev-local`)
+# so we don't depend on profile sourcing or devcontainer PATH substitution.
+sudo ln -sf "$HOME/.local/bin/uv" /usr/local/bin/uv
+sudo ln -sf "$HOME/.local/bin/uvx" /usr/local/bin/uvx
 
 echo "==> Backend dependencies (uv sync)…"
 ( cd backend && uv sync )

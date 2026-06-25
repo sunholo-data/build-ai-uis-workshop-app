@@ -6,9 +6,6 @@
     "ghcr.io/devcontainers/features/node:1": { "version": "20" },
     "ghcr.io/devcontainers/features/python:1": { "version": "3.12" }
   },
-  "containerEnv": {
-    "PATH": "/home/vscode/.local/bin:${containerEnv:PATH}"
-  },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "forwardPorts": [3456, 1956, 3457],
   "portsAttributes": {

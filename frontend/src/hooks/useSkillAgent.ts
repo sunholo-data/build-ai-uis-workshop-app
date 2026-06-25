@@ -225,7 +225,12 @@ export function useSkillAgent(options?: { _hangTimeoutMs?: number }): UseSkillAg
     sync(agentChanged);
 
     const sub = agent.subscribe({
-      onMessagesChanged: () => sync(),
+      // 🧩 WORKSHOP EXERCISE (AG-UI) — see docs/exercises/agui.md
+      // The chat is frozen: streamed messages never reach the UI. Wire the ONE
+      // agent.subscribe callback that fires on every message change and re-syncs
+      // React state (the other callbacks below show the `name: () => {…}` shape).
+      // Then: cd frontend && npx vitest run src/hooks/__tests__/useSkillAgent.test.tsx
+      // Reveal: git diff workshop-start main -- frontend/src/hooks/useSkillAgent.ts
       onRunStartedEvent: () => {
         setIsLoading(true);
         setRunStarted(true);

@@ -217,7 +217,12 @@ def _demo_skills(now: float) -> list[dict]:
                 "tools": [],
                 "toolConfigs": {
                     "a2ui": {
-                        "default_surface": "workspace",
+                        # 🧩 WORKSHOP EXERCISE (A2UI) — see docs/exercises/a2ui.md
+                        # This skill's dashboard renders inline in chat instead of
+                        # the workspace pane. Restore the ONE key that routes A2UI
+                        # output to a surface (set it to "workspace"). Then:
+                        #   cd backend && uv run pytest tests/unit/test_demo_workspace_surface.py
+                        # Reveal: git diff workshop-start main -- backend/db/local_fixture.py
                         "default_update_mode": "replace",
                         # Sprint 2.10 — opt this demo skill into the
                         # surface→agent context loop. Without this flag,

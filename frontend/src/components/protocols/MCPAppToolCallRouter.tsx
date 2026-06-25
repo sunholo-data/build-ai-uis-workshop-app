@@ -423,30 +423,15 @@ function RoutedToolCall({
           // Pre-first-turn render or /dev/* surface — silently no-op.
           return {};
         }
-        try {
-          const p = (request.params ?? {}) as {
-            structuredContent?: Record<string, unknown>;
-            content?: unknown[];
-          };
-          await fetchWithAuth(
-            `/api/proxy/api/sessions/${encodeURIComponent(sessionId)}/iframe-context`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                serverId,
-                toolName: unprefixedName,
-                structuredContent: p.structuredContent ?? null,
-                content: p.content ?? null,
-              }),
-            },
-          );
-        } catch (err) {
-          console.warn(
-            "MCPAppToolCallRouter: update-model-context POST failed",
-            err,
-          );
-        }
+        // 🧩 WORKSHOP EXERCISE (MCP Apps) — see docs/exercises/mcp.md
+        // The iframe is pushing its state via ui/update-model-context, but we
+        // drop it here, so the agent never learns what's on screen. Restore the
+        // POST of the notification's `structuredContent` (and `content`) to
+        //   /api/proxy/api/sessions/{sessionId}/iframe-context
+        // method "POST", JSON body { serverId, toolName: unprefixedName,
+        // structuredContent, content } — via fetchWithAuth, wrapped in try/catch.
+        // Then: cd frontend && npx vitest run src/components/protocols/__tests__/MCPAppToolCallRouter.iframeContext.test.tsx
+        // Reveal: git diff workshop-start main -- frontend/src/components/protocols/MCPAppToolCallRouter.tsx
         return {};
       }}
       onError={(err: Error) => {

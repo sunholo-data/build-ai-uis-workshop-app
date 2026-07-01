@@ -31,7 +31,7 @@ import {
   type A2uiMessage,
   type SurfaceModel,
 } from "@a2ui/web_core/v0_9";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 let stylesInjected = false;
 function ensureStyles() {
@@ -94,25 +94,41 @@ export function A2UIRenderer({ messages, fallbackSurfaceId, onAction }: A2UIRend
     [],
   );
 
-  // Wire actions: subscribe once per processor; the model fan-out reaches
-  // every surface inside it.
+  // Wire actions: subscribe EXACTLY once per processor. The onAction prop is a
+  // fresh closure on every parent render, so keying the subscription on it (the
+  // old `[processor, onAction]`) tore down and re-created the subscription on
+  // every render — churn that, combined with a form re-emit, helped drive an
+  // action-spam loop. Read the latest onAction through a ref instead so the
+  // subscription is stable for the processor's lifetime.
+  const onActionRef = useRef(onAction);
   useEffect(() => {
-    if (!onAction) return;
+    onActionRef.current = onAction;
+  }, [onAction]);
+  useEffect(() => {
     const sub = processor.model.onAction.subscribe((action) => {
-      onAction({
+      onActionRef.current?.({
         name: action.name,
         sourceComponentId: action.sourceComponentId,
         context: action.context,
       });
     });
     return () => sub.unsubscribe();
-  }, [processor, onAction]);
+  }, [processor]);
 
+  const lastProcessedSigRef = useRef<string | null>(null);
   useEffect(() => {
     if (!isMessageArray(messages)) {
       setError(`A2UI payload is not a v0.9 message array: ${JSON.stringify(messages).slice(0, 200)}`);
       return;
     }
+
+    // Process each distinct payload once. The parent re-parses (and so hands us
+    // a fresh `messages` array identity) on every render; without this guard we
+    // re-ran processMessages on unchanged content every render — wasted work
+    // that rebuilt the component tree and fed the action-spam loop.
+    const sig = JSON.stringify(messages);
+    if (sig === lastProcessedSigRef.current) return;
+    lastProcessedSigRef.current = sig;
 
     const surfaceId = pickSurfaceId(messages, fallbackSurfaceId ?? "inline");
     const firstHasCreate = "createSurface" in messages[0];

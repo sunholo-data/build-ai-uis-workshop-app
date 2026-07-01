@@ -537,8 +537,40 @@ export function ChatShell({
     });
   }, [clearError, sendMessage, includedDocIds, enteredViaResume]);
 
+  // Loop/spam guard for A2UI actions. An action (e.g. a form submit) fires an
+  // agent turn; the agent re-emits the surface, and a chat re-render can
+  // re-fire the SAME action — an unbounded loop that hammers the LLM (a single
+  // submit spun hundreds of turns / millions of tokens). Unlike handleSend,
+  // this path had no in-flight gate. We (a) never dispatch while a run is
+  // already in flight, and (b) drop an identical action repeated within a
+  // window that outlasts a normal turn. A human cannot resubmit the same form
+  // with identical data in a few seconds, so only machine-driven repeats are
+  // suppressed. Refs (not state) keep handleAction's identity stable — a
+  // changing onAction prop is itself part of what drove the churn.
+  const isLoadingRef = useRef(isLoading);
+  useEffect(() => {
+    isLoadingRef.current = isLoading;
+  }, [isLoading]);
+  const lastActionSendRef = useRef<{ key: string; at: number } | null>(null);
+
   const handleAction = useCallback(
     (event: { actionName: string; context: Record<string, unknown> }) => {
+      const key = `${event.actionName}:${JSON.stringify(event.context)}`;
+      const now = Date.now();
+      const prev = lastActionSendRef.current;
+      if (
+        isLoadingRef.current ||
+        (prev && prev.key === key && now - prev.at < 8000)
+      ) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn(
+            `[ChatShell] dropped A2UI action "${event.actionName}" — loop guard ` +
+              `(inFlight=${isLoadingRef.current})`,
+          );
+        }
+        return;
+      }
+      lastActionSendRef.current = { key, at: now };
       void sendMessage(
         `[a2ui:${event.actionName}] ${JSON.stringify(event.context)}`,
         { documentIds: includedDocIds, resumedSession: enteredViaResume },

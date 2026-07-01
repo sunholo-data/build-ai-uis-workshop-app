@@ -50,7 +50,7 @@ import logging
 import time
 from typing import Any
 
-from ag_ui.core import RunAgentInput
+from ag_ui.core import RunAgentInput, UserMessage
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from google.adk.events import Event, EventActions
@@ -179,13 +179,22 @@ async def _write_action_to_state(
         session_id=session_id,
     )
     if session is None:
+        # Robustness: the frontend bootstraps the session on mount, but a click
+        # can still race the bootstrap or hit a fresh backend (LOCAL_MODE
+        # sessions are in-memory and reset on every restart). Auto-create on
+        # demand rather than 404 — an action run is meaningless without a
+        # session, and create_session is idempotent for the same id.
         log.info(
-            "surface_action_run: ADK session not found uid=%s session_id=%s skill_id=%s",
+            "surface_action_run: ADK session missing — auto-creating uid=%s session_id=%s skill_id=%s",
             user.uid,
             session_id,
             skill_id,
         )
-        raise HTTPException(status_code=404, detail="Session backend not found")
+        session = await session_service.create_session(
+            app_name=APP_NAME,
+            user_id=user.uid,
+            session_id=session_id,
+        )
 
     state_key = f"{_STATE_KEY_NAMESPACE}.{body.surface_id}.lastAction"
     state_value: dict[str, Any] = {
@@ -220,12 +229,14 @@ async def _write_action_to_state(
 
 
 def _build_run_input(session_id: str, body: SurfaceActionRunRequest) -> RunAgentInput:
-    """Synthesize a ``RunAgentInput`` with empty messages, the action
-    trigger seeded into ``state`` (where ``wrap_with_a2ui_surface_context``
+    """Synthesize a ``RunAgentInput`` with a single synthetic user turn, the
+    action trigger seeded into ``state`` (where ``wrap_with_a2ui_surface_context``
     reads it from), and the same payload mirrored into ``forwarded_props``.
 
-    ``ADKAgent.run()`` accepts empty messages — falls through to
-    ``_start_new_execution`` at adk_agent.py line 840.
+    ADK's runner requires a non-empty ``new_message`` (or an ``invocation_id``)
+    to start a turn — an empty ``messages`` list raises BACKGROUND_EXECUTION_ERROR
+    on the installed ag_ui_adk/ADK. The trigger itself travels via ``state``; the
+    synthetic message just gives ADK something to run.
     """
     surface_snapshot = (body.forwarded_props or {}).get("a2ui_surface_state")
     surface_state: dict[str, Any] = surface_snapshot if isinstance(surface_snapshot, dict) else {}
@@ -259,7 +270,16 @@ def _build_run_input(session_id: str, body: SurfaceActionRunRequest) -> RunAgent
         threadId=session_id,
         runId=f"action_trigger_{int(time.time() * 1000)}",
         state=initial_state,
-        messages=[],
+        messages=[
+            UserMessage(
+                id=f"action_{int(time.time() * 1000)}",
+                role="user",
+                content=(
+                    f"(The user triggered the '{body.action.name}' action on the "
+                    "interactive UI surface. Respond by updating the surface.)"
+                ),
+            )
+        ],
         tools=[],
         context=[],
         forwardedProps=forwarded_props,

@@ -133,10 +133,22 @@ export function A2UIRenderer({ messages, fallbackSurfaceId, onAction }: A2UIRend
           } as A2uiMessage,
         ]);
       }
-      // The SDK validator already accepted these messages on the backend;
-      // cast at the boundary since the typed union is wider than what
-      // arrives at runtime.
-      processor.processMessages(messages as unknown as A2uiMessage[]);
+      // Re-declared surface. This effect re-runs whenever `messages` changes
+      // identity (a parent chat re-render) and the processor persists across
+      // runs — so a batch carrying createSurface for an already-created surface
+      // makes web_core throw "Surface already exists", which we'd render as a
+      // scary raw-JSON error bubble in the chat (the form-builder failure). In
+      // v0.9 createSurface only declares surfaceId/catalogId/theme (components +
+      // data arrive via updateComponents/updateDataModel), so for an existing
+      // surface it's redundant: strip it and apply the rest.
+      // The SDK validator already accepted these messages on the backend; cast
+      // at the boundary since the typed union is wider than what arrives.
+      const toProcess = (
+        exists ? messages.filter((m) => !("createSurface" in m)) : messages
+      ) as unknown as A2uiMessage[];
+      if (toProcess.length > 0) {
+        processor.processMessages(toProcess);
+      }
       const model = processor.model.getSurface(surfaceId) ?? null;
       setSurface(model);
       setError(null);

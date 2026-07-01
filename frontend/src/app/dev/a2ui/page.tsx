@@ -21,6 +21,7 @@
 import { useEffect, useState } from "react";
 import { basicCatalog } from "@a2ui/react/v0_9";
 import { A2UISurfaceMount } from "@/components/protocols/A2UISurfaceMount";
+import { fetchWithAuth } from "@/lib/apiClient";
 import {
   SurfaceRegistryProvider,
   useSurfaceRegistry,
@@ -44,11 +45,22 @@ const PATTERN1_SESSION_ID = "pattern1-fixture-001";
  */
 const PATTERN1_SEED_MESSAGES: Record<string, unknown>[] = [
   {
+    // v0.9 `createSurface` declares ONLY surfaceId + catalogId — the SDK's
+    // MessageProcessor ingests components exclusively via `updateComponents`
+    // (see @a2ui/web_core message-processor: createSurface never reads a
+    // `components` field). Emitting components inline here silently drops them,
+    // so the surface renders "[Loading root...]" forever. The root component id
+    // is "root" by convention (A2uiSurface renders DeferredChild id="root").
     version: "v0.9",
     createSurface: {
       surfaceId: PATTERN1_SURFACE_ID,
       catalogId: basicCatalog.id,
-      root: "root",
+    },
+  },
+  {
+    version: "v0.9",
+    updateComponents: {
+      surfaceId: PATTERN1_SURFACE_ID,
       components: [
         {
           id: "root",
@@ -86,10 +98,14 @@ const PATTERN1_SEED_MESSAGES: Record<string, unknown>[] = [
     },
   },
   {
+    // v0.9 `updateDataModel` sets ONE path to a value: { surfaceId, path, value }.
+    // (Not { surfaceId, data: {...} } — the processor reads payload.path/value,
+    // so a `data` blob is silently ignored and bindings resolve to nothing.)
     version: "v0.9",
     updateDataModel: {
       surfaceId: PATTERN1_SURFACE_ID,
-      data: {
+      path: "/",
+      value: {
         counter: 0,
         counterDisplay: "Clicks: 0",
       },
@@ -127,6 +143,21 @@ function Pattern1Section() {
     const t = setTimeout(() => setHint(null), 4000);
     return () => clearTimeout(t);
   }, [hint]);
+
+  // Pre-create the ADK session so the click-driven surface-action-run has a
+  // session to write to + run against. The chat path bootstraps automatically
+  // (ChatShell); a fixture that fires actions without ever chatting must do it
+  // explicitly, else the first click 404s ("Session not found"). Idempotent.
+  useEffect(() => {
+    void fetchWithAuth(
+      `/api/proxy/api/sessions/${PATTERN1_SESSION_ID}/bootstrap`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skill_id: PATTERN1_SKILL_ID }),
+      },
+    ).catch(() => {});
+  }, []);
 
   return (
     <section className="space-y-3" data-testid="pattern1-section">

@@ -25,7 +25,7 @@ export interface SkillMessage {
 }
 
 export interface StreamError {
-  kind: "http" | "run_error" | "network" | "budget_exceeded";
+  kind: "http" | "run_error" | "network" | "budget_exceeded" | "rate_limited";
   status?: number;
   message: string;
   retryable: boolean;
@@ -133,6 +133,25 @@ function classifyRunError(event: unknown): StreamError {
       kind: "budget_exceeded",
       message: msg,
       retryable: retryAfterSeconds !== undefined,
+      rawMessage: msg,
+      retryAfterSeconds,
+    };
+  }
+  // Gemini quota / rate limit. The model backend emits a RUN_ERROR whose
+  // message carries the raw 429 (RESOURCE_EXHAUSTED / "Too Many Requests" /
+  // "exceeded your current quota"). Surface it as its own clearly-worded branch
+  // so a KEY/QUOTA problem is never mistaken for a broken skill — during the
+  // workshop, free-tier keys routinely hit the per-minute cap.
+  if (/429|RESOURCE_EXHAUSTED|Too Many Requests|exceeded your current quota|rate limit/i.test(msg)) {
+    const retryMatch = msg.match(/retry(?:Delay)?["\s:]*(?:in\s*)?"?(\d+(?:\.\d+)?)\s*s/i);
+    const retryAfterSeconds = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) : undefined;
+    const wait = retryAfterSeconds
+      ? ` Wait ~${retryAfterSeconds}s and try again.`
+      : " Wait a moment and try again.";
+    return {
+      kind: "rate_limited",
+      message: `⏳ Rate limited — the Gemini API key hit its quota, not a problem with the demo.${wait}`,
+      retryable: true,
       rawMessage: msg,
       retryAfterSeconds,
     };
@@ -298,9 +317,35 @@ export function useSkillAgent(options?: { _hangTimeoutMs?: number }): UseSkillAg
           prev.map((tc) => tc.status === "running" ? { ...tc, status: "success" } : tc),
         );
       },
-      onRunFailed: (event: unknown) => {
+      // A backend-emitted RUN_ERROR *event* (the common case: a Gemini 429,
+      // a tool failure, a model error) is dispatched by the AG-UI client
+      // (0.0.52) to `onRunErrorEvent` — NOT `onRunFailed`. The RUN_ERROR case
+      // in the client runs the callback then completes the stream cleanly; it
+      // never throws, so `onRunFailed`/`onError` don't fire and `runAgent`
+      // resolves normally. Combined with the backend's terminal-dedup dropping
+      // the trailing RUN_FINISHED, that meant a RUN_ERROR was SILENTLY EATEN —
+      // the UI showed "thinking…" then went blank. Subscribing here surfaces
+      // it. The payload wraps the raw event as `{ event }`; classify off its
+      // own `message`/`code` (where the 429 text lives).
+      onRunErrorEvent: ({ event }: { event: unknown }) => {
         runFailedRef.current = true;
         const streamErr = classifyRunError(event);
+        console.warn("stream_run_error_event", streamErr);
+        setError(streamErr);
+        setIsLoading(false);
+        setRunStarted(false);
+        setStageLabel(null);
+        setToolCalls((prev) =>
+          prev.map((tc) => tc.status === "running" ? { ...tc, status: "error" } : tc),
+        );
+      },
+      // Pipeline-level failure (an actual throw/reject inside the run — e.g. a
+      // subscriber error). The client passes `{ error }` here, not a RUN_ERROR
+      // event, so classify off `error` (an Error with `.message`), not the
+      // wrapper. Genuine stream RUN_ERRORs come through onRunErrorEvent above.
+      onRunFailed: ({ error }: { error: unknown }) => {
+        runFailedRef.current = true;
+        const streamErr = classifyRunError(error);
         console.warn("stream_run_failed", streamErr);
         setError(streamErr);
         setIsLoading(false);

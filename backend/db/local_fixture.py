@@ -123,7 +123,7 @@ def _demo_skills(now: float) -> list[dict]:
         "skillMetadata": {
             "author": "aitana",
             "version": "1.0",
-            "model": "gemini-2.5-flash",
+            "model": "gemini-3.5-flash",
             "tools": [],
             "toolConfigs": {},
             "subSkills": [],
@@ -213,7 +213,7 @@ def _demo_skills(now: float) -> list[dict]:
                 # a verbatim A2UI JSON spec from its system prompt. Flash
                 # sometimes drops delimiters on dense literal JSON which
                 # fails payload_fixer.py's parse step. Pro is more literal.
-                "model": "gemini-2.5-pro",
+                "model": "gemini-3.5-flash",
                 "tools": [],
                 "toolConfigs": {
                     "a2ui": {
@@ -326,7 +326,7 @@ def _demo_skills(now: float) -> list[dict]:
             "skillMetadata": {
                 "author": "aitana",
                 "version": "1.0",
-                "model": "gemini-2.5-pro",
+                "model": "gemini-3.5-flash",
                 "tools": [],
                 "toolConfigs": {
                     "a2ui": {
@@ -453,7 +453,7 @@ def _demo_skills(now: float) -> list[dict]:
                 # Pro renders the JSON literally; flash sometimes drops a
                 # delimiter on dense literal payloads. Same reasoning as
                 # `demo-workspace` above.
-                "model": "gemini-2.5-pro",
+                "model": "gemini-3.5-flash",
                 "tools": [],
                 "toolConfigs": {
                     "a2ui": {
@@ -581,7 +581,7 @@ def _demo_skills(now: float) -> list[dict]:
             "skillMetadata": {
                 "author": "aitana",
                 "version": "1.0",
-                "model": "gemini-2.5-flash",
+                "model": "gemini-3.5-flash",
                 "tools": ["search_workshop_docs"],
                 "toolConfigs": {},
                 "subSkills": [],

@@ -261,15 +261,24 @@ function StreamErrorBanner({
   onRetry: () => void;
   onDismiss: () => void;
 }) {
+  // Rate-limit / quota renders amber ("wait & retry") to visually distinguish a
+  // key/quota issue from a red "the demo is broken" error.
+  const amber = error.kind === "rate_limited";
+  const boxTone = amber
+    ? "border-amber-500/40 bg-amber-500/10 text-amber-700"
+    : "border-destructive/40 bg-destructive/10 text-destructive";
+  const btnTone = amber
+    ? "border-amber-500/40 hover:bg-amber-500/20"
+    : "border-destructive/40 hover:bg-destructive/20";
   return (
-    <div className="inline-block max-w-[80%] space-y-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+    <div className={`inline-block max-w-[80%] space-y-2 rounded-md border px-3 py-2 text-sm ${boxTone}`}>
       <p>{error.message}</p>
       <div className="flex gap-2">
         {error.retryable && (
           <button
             type="button"
             onClick={onRetry}
-            className="rounded border border-destructive/40 px-2 py-0.5 text-xs hover:bg-destructive/20"
+            className={`rounded border px-2 py-0.5 text-xs ${btnTone}`}
           >
             Try again
           </button>

@@ -106,6 +106,15 @@ export function A2UISurfaceMount({
     sessionId: sessionId ?? "",
   });
 
+  // Click-spam guard. An action-triggered run is a FULL agent turn (LLM
+  // call(s) + a re-emitted surface). Without a guard, rapid clicks fire N
+  // concurrent surface-action-run POSTs that race N surface updates and
+  // multiply rate-limit pressure. We drop clicks while a run is in flight —
+  // the button visibly "ignores" the extra taps, which is the correct UX for
+  // an agent-backed control (it is not a local counter). A ref, not state, so
+  // the guard flips without re-rendering / re-subscribing the action handler.
+  const actionInFlightRef = useRef(false);
+
   // Subscribe to surface actions and route each one through the
   // configured dispatch path. Re-subscribes whenever the SurfaceModel
   // identity changes (clearSurface → new createSurface).
@@ -125,6 +134,16 @@ export function A2UISurfaceMount({
           }
           return;
         }
+        // Drop the click if a run is already in flight (see actionInFlightRef).
+        if (actionInFlightRef.current) {
+          if (process.env.NODE_ENV !== "production") {
+            console.info(
+              `[A2UISurfaceMount] action ignored — a run is already in flight for surface "${surfaceId}"`,
+            );
+          }
+          return;
+        }
+        actionInFlightRef.current = true;
         try {
           await triggerAction(surfaceId, {
             name: action.name,
@@ -141,6 +160,8 @@ export function A2UISurfaceMount({
               err,
             );
           }
+        } finally {
+          actionInFlightRef.current = false;
         }
         return;
       }

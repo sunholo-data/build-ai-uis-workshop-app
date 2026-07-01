@@ -180,13 +180,16 @@ export function useActionDrivenAgent({
         forwardedProps: { a2ui_surface_state: surfaceSnapshot },
       };
 
-      let res: Response;
-      try {
-        res = await fetchWithAuth(url, {
+      const doPost = () =>
+        fetchWithAuth(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
+
+      let res: Response;
+      try {
+        res = await doPost();
       } catch (err) {
         if (process.env.NODE_ENV !== "production") {
           console.warn(
@@ -198,6 +201,39 @@ export function useActionDrivenAgent({
         // stays in its last-rendered state, no throw. Consumers can opt
         // into stricter handling by wrapping `triggerAction` themselves.
         return;
+      }
+
+      // Self-heal a vanished session. LOCAL_MODE sessions live in memory and
+      // disappear on a backend restart; a surface that was open before the
+      // restart outlives its session, so the action gate 404s ("Session not
+      // found"). The page bootstraps the session only once on mount, so we
+      // re-bootstrap here and retry the action exactly once. The backend
+      // access gate stays intact — the client owns session lifecycle.
+      if (res.status === 404) {
+        if (process.env.NODE_ENV !== "production") {
+          console.info(
+            `[useActionDrivenAgent] session "${sessionId}" missing (404) — bootstrapping + retrying once`,
+          );
+        }
+        try {
+          await fetchWithAuth(
+            `/api/proxy/api/sessions/${encodeURIComponent(sessionId)}/bootstrap`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ skill_id: skillId }),
+            },
+          );
+          res = await doPost();
+        } catch (err) {
+          if (process.env.NODE_ENV !== "production") {
+            console.warn(
+              `[useActionDrivenAgent] bootstrap-and-retry failed for ${url}:`,
+              err,
+            );
+          }
+          return;
+        }
       }
 
       if (!res.ok) {

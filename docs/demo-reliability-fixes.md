@@ -120,9 +120,13 @@ flight. (Named-surface path; the inline path is covered by fix #2.)
 (unavailable) on the free tier; and even `gemini-3.5-flash` free tier is
 ~20 req/day — far too low for a workshop.
 
-**Fix:** switch fixture models to `gemini-3.5-flash` (`local_fixture.py`) **and
-document that the demos need a billing-enabled key.** The free tier cannot carry
-a room of attendees.
+**Fix:** switch fixture models to **`gemini-flash-lite-latest`**
+(`local_fixture.py`) — a flash-lite tier that runs every demo faster (1.8–6.9s,
+vs `3.5-flash` where form-builder was ~11s and `workshop-helper` >40s) while
+still emitting valid, renderable A2UI. Also **document that the demos need a
+billing-enabled key** — the free tier (~20 req/day) cannot carry a room of
+attendees. Note: `-latest` is an alias Google can repoint; pin the concrete
+version if you need strict reproducibility.
 
 ## 7. /dev/a2ui fixture used wrong v0.9 shape
 
@@ -164,9 +168,10 @@ Run it the morning of.
 2. `scripts/refresh-public-template.sh` → publishes to `ai-protocol-platform`.
 3. Add the "needs a paid Gemini key" note to the template README / WORKSHOP.md.
 
-## Open items
+## Resolved since first draft
 
-- **workshop-helper** — a slow multi-tool RAG agent; sometimes 18+ tool calls
-  and >40s. Finishes, but worth a look (tool-call cap / timeout / prompt).
-- **Model choice** — evaluating a lighter/faster model than `gemini-3.5-flash`
-  for the demos (latency + cost). TBD which we have access to.
+- **Model choice** — settled on `gemini-flash-lite-latest` (see #6). All 7 demos
+  pass the stream sweep + the browser render/loop check under it.
+- **workshop-helper slowness** — was >40s / 18+ tool calls on `3.5-flash`; runs
+  in ~4s on `gemini-flash-lite-latest`. The high tool-call count is still worth a
+  look eventually, but it's no longer a demo blocker.

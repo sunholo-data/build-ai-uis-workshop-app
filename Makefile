@@ -1,4 +1,4 @@
-.PHONY: dev dev-local proxy-check logs help cli-install cli-reinstall cli-uninstall cli-doctor cli-selftest-mock cli-selftest-live cli-selftest verify-a2a setup-gemini-enterprise
+.PHONY: dev dev-local preflight proxy-check logs help cli-install cli-reinstall cli-uninstall cli-doctor cli-selftest-mock cli-selftest-live cli-selftest verify-a2a setup-gemini-enterprise
 
 # Launch backend (port 1956) + frontend (port 3000) for local development.
 # Logs stream to stdout; Ctrl-C stops both.
@@ -23,6 +23,15 @@ proxy-check:
 
 logs:
 	@scripts/logs.sh
+
+# Morning-of pre-flight: with `make dev-local` already running, confirm every
+# demo actually works before attendees arrive. Streams each demo (catches the
+# 429/quota "nothing works" class) and, if playwright is installed, drives a
+# real browser through the A2UI paths incl. a form-submit LOOP check. Exit 0 =
+# good to present. Run: make preflight
+preflight:
+	@chmod +x scripts/preflight.sh
+	@scripts/preflight.sh
 
 # --- CLI lifecycle ---
 

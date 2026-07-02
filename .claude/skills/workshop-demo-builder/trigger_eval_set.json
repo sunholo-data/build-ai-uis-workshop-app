@@ -1,0 +1,10 @@
+[
+  {"query": "Can you make a new demo that renders a contact form from A2UI JSON in the /dev playground?", "should_trigger": true},
+  {"query": "I want to add an MCP App widget demo — a little weather panel that reports the selected city back to the agent", "should_trigger": true},
+  {"query": "add a new playground under /dev that shows a declarative card surface", "should_trigger": true},
+  {"query": "make me a demo for the workshop that embeds an interactive sandboxed widget", "should_trigger": true},
+  {"query": "scaffold a new /dev surface that seeds an A2UI counter and renders it offline", "should_trigger": true},
+  {"query": "fix the Firestore auth bug where request.auth.uid is null on the documents route", "should_trigger": false},
+  {"query": "why is my ADK eval scoring 0 on tool trajectory? help me debug the evalset", "should_trigger": false},
+  {"query": "update the README to document the make dev-local ports", "should_trigger": false}
+]

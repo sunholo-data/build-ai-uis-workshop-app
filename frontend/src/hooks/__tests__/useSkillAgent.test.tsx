@@ -204,6 +204,50 @@ describe("useSkillAgent — core", () => {
       });
     });
   });
+
+  // F2a gap regression (demo-click-counter): a text-less tool-call-only turn
+  // never fires TEXT_MESSAGE_START, so the text-anchor back-attribution can't
+  // set parentMessageId — it stays undefined. ChatMessageList's lastAssistantId
+  // fallback then collapses EVERY unparented tool call onto the single newest
+  // assistant bubble, so a second increment made the first turn's card vanish
+  // and re-rendered both under the newest turn. Reconciling parentMessageId
+  // from agent.messages' own toolCalls[].id pins each tool call to its real
+  // owning message, so each turn keeps its own card.
+  it("attributes text-less tool-call turns to their own assistant message", async () => {
+    const { result } = renderHook(() => useSkillAgent());
+
+    const pushToolOnlyTurn = (messageId: string, toolCallId: string) => {
+      // Tool call arrives with no parentMessageId (ADK omits it) and no
+      // preceding text message — the F2a fallback can't anchor it.
+      fake.emitToolCallStart(toolCallId, "send_a2ui_json_to_client");
+      // AG-UI then materialises the owning assistant message, carrying the
+      // tool call id in its own toolCalls[] (content omitted — no chat text).
+      (fake.messages as Array<Record<string, unknown>>).push({
+        id: messageId,
+        role: "assistant",
+        toolCalls: [
+          {
+            id: toolCallId,
+            type: "function",
+            function: { name: "send_a2ui_json_to_client", arguments: "{}" },
+          },
+        ],
+      });
+      fake.subscribers.forEach((s) => s.onMessagesChanged?.({}));
+    };
+
+    act(() => pushToolOnlyTurn("asst-1", "tc-1"));
+    act(() => pushToolOnlyTurn("asst-2", "tc-2"));
+
+    await waitFor(() => {
+      const parentById = Object.fromEntries(
+        result.current.toolCalls.map((tc) => [tc.id, tc.parentMessageId]),
+      );
+      // Each card stays on its OWN turn — not collapsed onto the newest.
+      expect(parentById["tc-1"]).toBe("asst-1");
+      expect(parentById["tc-2"]).toBe("asst-2");
+    });
+  });
 });
 
 // docs/design/v6.1.0/ttft-instrumentation.md M2 — STAGE_PROGRESS labels

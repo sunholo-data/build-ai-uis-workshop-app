@@ -96,6 +96,31 @@ function toSkillMessage(m: Message): SkillMessage | null {
   return null;
 }
 
+/**
+ * Ground-truth map of tool-call id → the assistant message that owns it, read
+ * from AG-UI's `agent.messages` (each AssistantMessage carries its own
+ * `toolCalls[].id`). ADK omits `parentMessageId` on TOOL_CALL_START, and the
+ * F2a text-anchor back-attribution only fires on TEXT_MESSAGE_START — so a
+ * *text-less* tool-call-only turn (e.g. the click-counter's increment, which
+ * emits `send_a2ui_json_to_client` with no chat text) leaves its tool calls
+ * unparented. ChatMessageList's `lastAssistantId` fallback then collapses every
+ * unparented tool call onto the single newest assistant bubble: the prior
+ * turn's card vanishes and the newest bubble renders all of them at once.
+ * Pinning each tool call to its real owning message closes that gap.
+ */
+function toolCallOwnership(messages: Message[]): Map<string, string> {
+  const owners = new Map<string, string>();
+  for (const m of messages) {
+    const calls = (m as { toolCalls?: { id?: unknown }[] }).toolCalls;
+    if (!Array.isArray(calls)) continue;
+    for (const call of calls) {
+      const id = call?.id;
+      if (typeof id === "string") owners.set(id, m.id);
+    }
+  }
+  return owners;
+}
+
 function classifyError(err: unknown): StreamError {
   const msg = err instanceof Error ? err.message : String(err);
   const httpMatch = msg.match(/HTTP (\d+)/);
@@ -215,7 +240,8 @@ export function useSkillAgent(options?: { _hangTimeoutMs?: number }): UseSkillAg
     lastAgentRef.current = agent;
 
     const sync = (allowReset = false) => {
-      const next = agent.messages
+      const raw = agent.messages;
+      const next = raw
         .map(toSkillMessage)
         .filter((m): m is SkillMessage => m !== null);
       // F1 (chat-history-fixes v6.1.0): never shrink the rendered list
@@ -238,6 +264,28 @@ export function useSkillAgent(options?: { _hangTimeoutMs?: number }): UseSkillAg
         }
         return next;
       });
+
+      // F2a gap: back-attribute any still-unparented tool call to its true
+      // owning assistant message (see toolCallOwnership). This is what keeps a
+      // text-less tool-call-only turn's card in its OWN bubble instead of
+      // collapsing onto the newest one. Fills gaps only — an already-set
+      // parentMessageId (the TEXT_MESSAGE_START path) is left untouched.
+      // Idempotent: returns the same array reference when nothing changed, so
+      // it never re-triggers a render loop.
+      const owners = toolCallOwnership(raw);
+      if (owners.size > 0) {
+        setToolCalls((prev) => {
+          let changed = false;
+          const reconciled = prev.map((tc) => {
+            if (tc.parentMessageId !== undefined) return tc;
+            const owner = owners.get(tc.id);
+            if (!owner) return tc;
+            changed = true;
+            return { ...tc, parentMessageId: owner };
+          });
+          return changed ? reconciled : prev;
+        });
+      }
     };
     // First sync after agent change must allow a reset to the new
     // agent's (possibly empty) message list.

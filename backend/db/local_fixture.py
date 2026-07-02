@@ -107,6 +107,23 @@ def seed_local_fixture() -> None:
 
         _clear_perm_cache()
 
+    # ---- MCP servers -----------------------------------------------------
+    # The bundled local MCP App server (infrastructure/mcp-local-demo, started
+    # by `make dev-local` on :3001) powers the demo-map-explorer skill's
+    # show-demo tool. Registered here so the agent's McpToolset can resolve it
+    # (resolution is config-only — a down server just fails lazily at call
+    # time, it doesn't break agent build). 127.0.0.1 (not localhost) dodges
+    # Node's IPv6 DNS trap; the agent dials this server-side.
+    mcp_servers = list(client.collection("mcp_servers").stream())
+    if not mcp_servers:
+        client.collection("mcp_servers").document("local-demo").set(
+            {
+                "url": "http://127.0.0.1:3001/mcp",
+                "transport": "http",
+                "note": "Bundled local MCP App demo (infrastructure/mcp-local-demo).",
+            }
+        )
+
     counts = client.snapshot_size() if hasattr(client, "snapshot_size") else {}
     logger.info("LOCAL_MODE fixture seeded: %s", counts)
 
@@ -175,24 +192,53 @@ def _demo_skills(now: float) -> list[dict]:
         },
         {
             **base,
+            # Own skillMetadata (not base's empty one) so this skill actually
+            # wires the bundled local MCP App server. `tools: ["mcp"]` triggers
+            # resolve_mcp_tools; `toolConfigs.mcp.servers` names the Firestore
+            # mcp_servers/{id} to load (seeded above → :3001). The frontend's
+            # useSkillMeta reads the same toolConfigs.mcp.servers to route the
+            # rendered tool call through MCPAppToolCallRouter in chat.
+            "skillMetadata": {
+                "author": "aitana",
+                "version": "1.0",
+                "model": "gemini-flash-lite-latest",
+                "tools": ["mcp"],
+                # servers → which mcp_servers/{id} to load.
+                # allow_context_writes → opt this skill into the iframe→agent
+                # write-back so the widget's ui/update-model-context POST to
+                # /iframe-context is accepted (default-deny otherwise → 403).
+                # This is what makes slider interactions influence the NEXT
+                # chat turn (the agent reads mcp_app_context.local-demo).
+                "toolConfigs": {
+                    "mcp": {
+                        "servers": ["local-demo"],
+                        "allow_context_writes": ["local-demo"],
+                    }
+                },
+                "subSkills": [],
+            },
             "skillId": "demo-map-explorer",
             "slug": "demo-map-explorer",
-            "displayName": "Demo Map Explorer",
+            "displayName": "MCP App Demo (local)",
             "name": "demo-map-explorer",
             "description": (
-                "Workshop W7 placeholder: in cloud mode, this skill activates "
-                "the ext-apps-map MCP server and renders interactive globes. "
-                "In LOCAL_MODE the MCP server is disabled — the agent will "
-                "describe what it would do."
+                "Workshop W7 demo: activates the bundled local MCP App server "
+                "(infrastructure/mcp-local-demo, started by make dev-local) and "
+                "renders its interactive widget inline in chat via MCP Apps — "
+                "no external download, works offline."
             ),
             "instructions": (
-                "You normally use the show-map MCP tool to render maps in an "
-                "iframe. In LOCAL_MODE the MCP server isn't running, so "
-                "instead, describe to the user what bounding box you would "
-                "show. Keep it under 3 sentences."
+                "You render an interactive MCP App widget for the user. When "
+                "they ask to see the demo, a widget, or a map, call the "
+                "show-demo MCP tool — it mounts an interactive widget in an "
+                "iframe in the chat. After calling it once, tell the user to "
+                "drag the slider and click the button, and that their "
+                "interactions stream back to you over the model-context "
+                "channel. Keep replies under 3 sentences; don't call the tool "
+                "more than once per request."
             ),
             "initialMessage": (
-                "Try: 'show me Copenhagen' — in cloud mode I'd render a real map; here I'll describe what I'd show."
+                "Try: 'show me the demo widget' — I'll render an interactive MCP App right here in the chat."
             ),
         },
         # ────────────────────────────────────────────────────────────────────
@@ -482,8 +528,10 @@ def _demo_skills(now: float) -> list[dict]:
                 "turn). One Button surface; each click runs an agent turn "
                 "via /surface-action-run that re-emits the surface with an "
                 "incremented counter. No chat composer involved — the "
-                "click ALONE drives the agent. See "
-                "docs/design/v6.1.0/action-triggered-agent-turn.md."
+                "click ALONE drives the agent. Because it renders inline in "
+                "chat (an append-only transcript), each click adds a fresh "
+                "card — the stack of cards is the turn history, not a bug. "
+                "See docs/design/v6.1.0/action-triggered-agent-turn.md."
             ),
             "instructions": (
                 "You are the CLICK COUNTER demo agent for the AI Protocol "
@@ -560,10 +608,18 @@ def _demo_skills(now: float) -> list[dict]:
             "initialMessage": (
                 "Hi — I'm the **Click Counter** demo (Pattern 1: Click-"
                 'Driven AI UI). Type **"start"** to render the button, '
-                "then each click fires an agent turn via "
-                "`/surface-action-run` — no chat composer involved. The "
-                "counter is owned by the agent's data model; the surface "
-                "is just a render of it."
+                "then click it — each click fires a *new* agent turn via "
+                "`/surface-action-run`, no chat composer involved.\n\n"
+                "**Heads-up:** you'll see a fresh Click Counter card appear "
+                "for every click, stacking down the chat. That's expected — "
+                "chat is an append-only transcript, so each agent turn "
+                "renders its own card. **The stack of cards is the turn "
+                "history.** The count still climbs because the counter lives "
+                "in the agent's data model and carries across turns — the "
+                "surface is just a render of it. (Want a single widget that "
+                "updates in place instead? Route it to a persistent surface "
+                "— e.g. a `workspace` mount — so each turn patches the same "
+                "canvas rather than appending a new card.)"
             ),
         },
         # ────────────────────────────────────────────────────────────────────
@@ -678,6 +734,6 @@ def _demo_document_content() -> str:
         "## Try the demo skills\n\n"
         "- **Demo Researcher** — pure ADK, streaming AG-UI text only\n"
         "- **Demo Form Builder** — emits an A2UI form for the frontend to render\n"
-        "- **Demo Map Explorer** — wired to ext-apps-map (cloud mode only)\n\n"
+        "- **MCP App Demo (local)** — renders the bundled local MCP App widget inline (make dev-local, no download)\n\n"
         "Open WORKSHOP.md to see the matching code paths.\n"
     )

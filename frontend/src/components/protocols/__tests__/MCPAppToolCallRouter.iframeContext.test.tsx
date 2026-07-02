@@ -12,7 +12,7 @@
 //     transport error — graceful degradation: agent stays blind to
 //     iframe state, but the iframe keeps rendering)
 
-import { render, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import toolsListFixture from "./fixtures/map-server-tools-list.json";
 import showMapResultFixture from "./fixtures/map-server-show-map-result.json";
@@ -38,10 +38,15 @@ vi.mock("@mcp-ui/client", async () => {
   };
 });
 
-const useMcpClientMock = vi.fn(() => ({
+// Stable client identity across renders — production's useMcpClient is
+// module-cached, so returning a fresh object here would falsely retrigger the
+// `[client]` effect on every re-render (infinite loop once any state update,
+// e.g. the trust receipt, causes a re-render).
+const stableMcpClient = {
   listTools: vi.fn(async () => toolsListFixture.result),
   readResource: vi.fn(async () => uiResourceFixture.result),
-}));
+};
+const useMcpClientMock = vi.fn(() => stableMcpClient);
 vi.mock("@/lib/mcpClient", () => ({
   useMcpClient: () => useMcpClientMock(),
 }));
@@ -125,6 +130,93 @@ describe("MCPAppToolCallRouter — ui/update-model-context (sprint 1.25)", () =>
 
     expect(ack).toEqual({});
     expect(fetchWithAuthMock).not.toHaveBeenCalled();
+  });
+
+  it("shows a 'Sent to the assistant' trust receipt (with the payload) after a successful context write", async () => {
+    capturedOnFallbackRequest = null;
+    fetchWithAuthMock.mockClear();
+    fetchWithAuthMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    render(
+      <MCPAppToolCallRouter
+        toolCalls={[showMapToolCall()]}
+        mcpServerIds={["ext-apps-map"]}
+        sessionId="sess-42"
+      />,
+    );
+    await waitFor(() => expect(capturedOnFallbackRequest).not.toBeNull());
+
+    await act(async () => {
+      await capturedOnFallbackRequest!({
+        method: "ui/update-model-context",
+        params: SAMPLE_PARAMS,
+      });
+    });
+
+    await waitFor(() => {
+      const strip = screen.getByTestId("mcp-context-trust");
+      expect(strip).toBeInTheDocument();
+      expect(strip.getAttribute("data-trust-status")).toBe("sent");
+    });
+    // The receipt echoes what the assistant received (from structuredContent).
+    expect(screen.getByText(/label: Copenhagen/)).toBeInTheDocument();
+  });
+
+  it("clears the trust receipt (no false 'sent') when the skill isn't opted in (403)", async () => {
+    capturedOnFallbackRequest = null;
+    fetchWithAuthMock.mockClear();
+    fetchWithAuthMock.mockResolvedValueOnce(new Response(null, { status: 403 }));
+
+    render(
+      <MCPAppToolCallRouter
+        toolCalls={[showMapToolCall()]}
+        mcpServerIds={["ext-apps-map"]}
+        sessionId="sess-42"
+      />,
+    );
+    await waitFor(() => expect(capturedOnFallbackRequest).not.toBeNull());
+
+    await act(async () => {
+      await capturedOnFallbackRequest!({
+        method: "ui/update-model-context",
+        params: SAMPLE_PARAMS,
+      });
+    });
+
+    await waitFor(() => expect(fetchWithAuthMock).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId("mcp-context-trust")).not.toBeInTheDocument();
+  });
+
+  it("invokes onModelContextUpdate on ui/update-model-context even when sessionId is missing", async () => {
+    capturedOnFallbackRequest = null;
+    fetchWithAuthMock.mockClear();
+    const onModelContextUpdate = vi.fn();
+
+    render(
+      <MCPAppToolCallRouter
+        toolCalls={[showMapToolCall()]}
+        mcpServerIds={["ext-apps-map"]}
+        onModelContextUpdate={onModelContextUpdate}
+        // sessionId omitted — the /dev/* case where there's nothing to POST to
+      />,
+    );
+    await waitFor(() => expect(capturedOnFallbackRequest).not.toBeNull());
+
+    const ack = await capturedOnFallbackRequest!({
+      method: "ui/update-model-context",
+      params: SAMPLE_PARAMS,
+    });
+
+    // Observer fires regardless of session; no POST happens without a session.
+    expect(ack).toEqual({});
+    expect(fetchWithAuthMock).not.toHaveBeenCalled();
+    expect(onModelContextUpdate).toHaveBeenCalledTimes(1);
+    expect(onModelContextUpdate).toHaveBeenCalledWith({
+      serverId: "ext-apps-map",
+      toolName: "show-map",
+      structuredContent: SAMPLE_PARAMS.structuredContent,
+      content: null,
+    });
   });
 
   it("ignores fallback requests for other methods (no POST)", async () => {

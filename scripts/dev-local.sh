@@ -120,6 +120,7 @@ fi
 
 FRONTEND_PORT=3456
 SANDBOX_PORT=3457
+LOCAL_DEMO_PORT=3001   # bundled local MCP App server (infrastructure/mcp-local-demo)
 
 # Fixed log paths so Claude Code can tail/read them mid-session.
 LOG_DIR="$REPO_ROOT/.dev-logs"
@@ -127,9 +128,24 @@ mkdir -p "$LOG_DIR"
 BACKEND_LOG="$LOG_DIR/backend.log"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
 SANDBOX_LOG="$LOG_DIR/sandbox.log"
+LOCAL_DEMO_LOG="$LOG_DIR/mcp-local-demo.log"
+
+# Auto-install a small infra package's deps on first run so `make dev-local`
+# is genuinely one command — no "cd here and npm install" scavenger hunt.
+# Idempotent: skips when node_modules already exists.
+ensure_npm_deps() {
+    local dir="$1" label="$2"
+    [ -d "$dir/node_modules" ] && return 0
+    echo "[dev-local] Installing $label deps (first run — one-time)…"
+    if (cd "$dir" && npm install > "$LOG_DIR/${label}-install.log" 2>&1); then
+        echo "[dev-local]   $label deps installed."
+    else
+        echo "[dev-local]   ⚠ $label npm install failed — see $LOG_DIR/${label}-install.log"
+    fi
+}
 
 # Kill anything already on the dev ports so restart is clean.
-for PORT in 1956 $FRONTEND_PORT $SANDBOX_PORT; do
+for PORT in 1956 $FRONTEND_PORT $SANDBOX_PORT $LOCAL_DEMO_PORT; do
     PIDS=$(lsof -ti ":$PORT" 2>/dev/null || true)
     if [ -n "$PIDS" ]; then
         echo "Freeing port $PORT (pid $PIDS)…"
@@ -138,16 +154,41 @@ for PORT in 1956 $FRONTEND_PORT $SANDBOX_PORT; do
     fi
 done
 
-# Pre-build the MCP sandbox bundle (optional — only needed for MCP App demos).
+# MCP sandbox — every MCP-App iframe renders THROUGH it, so without it the
+# /dev/mcp-apps/* pages and the map/demo widgets stay blank.
 SANDBOX_DIR="$REPO_ROOT/infrastructure/mcp-sandbox"
+ensure_npm_deps "$SANDBOX_DIR" "mcp-sandbox"
 if [ -d "$SANDBOX_DIR/node_modules" ]; then
     (cd "$SANDBOX_DIR" && npm run build > /dev/null 2>&1) || true
+    SANDBOX_READY=1
+else
+    SANDBOX_READY=0
+fi
+
+# Bundled local MCP App server — the "local" option in /dev/mcp-apps/* and the
+# demo-map-explorer chat skill both point at http://localhost:3001/mcp. Ships
+# in-repo, so no external ext-apps clone.
+LOCAL_DEMO_DIR="$REPO_ROOT/infrastructure/mcp-local-demo"
+ensure_npm_deps "$LOCAL_DEMO_DIR" "mcp-local-demo"
+if [ -d "$LOCAL_DEMO_DIR/node_modules" ]; then
+    LOCAL_DEMO_READY=1
+else
+    LOCAL_DEMO_READY=0
 fi
 
 echo "=== Aitana dev server — LOCAL_MODE ==="
 echo "  Backend     → http://localhost:1956   (LOCAL_MODE=1, in-memory Firestore)"
 echo "  Frontend    → http://localhost:${FRONTEND_PORT}   (yellow LOCAL_MODE banner)"
-echo "  MCP sandbox → http://localhost:${SANDBOX_PORT}   (optional, for MCP App demos)"
+if [ "${SANDBOX_READY:-0}" = "1" ]; then
+    echo "  MCP sandbox → http://localhost:${SANDBOX_PORT}   (for MCP App demos)"
+else
+    echo "  MCP sandbox → (not started — deps missing; MCP App iframes won't render)"
+fi
+if [ "${LOCAL_DEMO_READY:-0}" = "1" ]; then
+    echo "  Local MCP   → http://localhost:${LOCAL_DEMO_PORT}/mcp   (bundled show-demo widget)"
+else
+    echo "  Local MCP   → (not started — deps install failed; see $LOG_DIR/mcp-local-demo-install.log)"
+fi
 echo "  Logs        → $LOG_DIR/"
 echo ""
 echo "Demo skill for sprint 2.9 (MULTI-SURFACE-A2UI):"
@@ -159,8 +200,8 @@ echo ""
 cleanup() {
     echo ""
     echo "Stopping dev servers…"
-    kill "$BACKEND_PID" "$FRONTEND_PID" ${SANDBOX_PID:-} 2>/dev/null || true
-    wait "$BACKEND_PID" "$FRONTEND_PID" ${SANDBOX_PID:-} 2>/dev/null || true
+    kill "$BACKEND_PID" "$FRONTEND_PID" ${SANDBOX_PID:-} ${LOCAL_DEMO_PID:-} 2>/dev/null || true
+    wait "$BACKEND_PID" "$FRONTEND_PID" ${SANDBOX_PID:-} ${LOCAL_DEMO_PID:-} 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
@@ -176,6 +217,12 @@ if [ -d "$SANDBOX_DIR/node_modules" ]; then
         ALLOWED_HOST_ORIGINS="http://localhost:${FRONTEND_PORT}" \
         npm run dev 2>&1 | tee "$SANDBOX_LOG") &
     SANDBOX_PID=$!
+fi
+
+if [ "${LOCAL_DEMO_READY:-0}" = "1" ]; then
+    (cd "$LOCAL_DEMO_DIR" && MCP_LOCAL_DEMO_PORT=$LOCAL_DEMO_PORT \
+        npm run start 2>&1 | tee "$LOCAL_DEMO_LOG") &
+    LOCAL_DEMO_PID=$!
 fi
 
 wait "$BACKEND_PID" "$FRONTEND_PID"

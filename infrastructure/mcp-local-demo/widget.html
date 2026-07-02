@@ -1,0 +1,182 @@
+<!doctype html>
+<!--
+  Local demo MCP App widget (served by ../serve.ts as ui://local-demo/widget/v1).
+  Self-contained — no build step, no external assets (the sandbox CSP allows
+  inline script/style but no network). It exercises BOTH iframe→host channels:
+
+    • ui/update-model-context (NOTIFICATION, no id) — sent on slider input.
+      The host page sniffs the sandbox↔host postMessage wire for these
+      (see /dev/mcp-apps/active), because the host SDK doesn't surface guest
+      notifications. This is the boldkast-style channel.
+
+    • ui/message (REQUEST) — sent on button click. AppRenderer's onMessage
+      receives it and the notificationToChatMessage adapter turns the
+      app/notify payload into a chat string.
+
+  The ~20-line JSON-RPC-over-postMessage helper is inlined per the MCP Apps
+  spec ("you don't need an SDK to talk MCP with the host").
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Local demo widget</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        margin: 0;
+        font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        padding: 16px;
+        color: #1f2937;
+        background: #ffffff;
+      }
+      h1 { font-size: 15px; margin: 0 0 4px; }
+      p.sub { margin: 0 0 16px; color: #6b7280; font-size: 12px; }
+      .row { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
+      input[type="range"] { flex: 1; }
+      .readout {
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+        min-width: 64px;
+        text-align: right;
+      }
+      button {
+        appearance: none;
+        border: 1px solid #c7d2fe;
+        background: #eef2ff;
+        color: #3730a3;
+        border-radius: 8px;
+        padding: 8px 12px;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:hover { background: #e0e7ff; }
+      .hint { font-size: 11px; color: #9ca3af; margin-top: 14px; }
+      code { background: #f3f4f6; border-radius: 4px; padding: 0 3px; }
+    </style>
+  </head>
+  <body>
+    <h1>Local demo widget</h1>
+    <p class="sub">
+      Bundled with the app — runs under <code>make dev-local</code>. Interact and
+      watch the host page's message log.
+    </p>
+
+    <div class="row">
+      <label for="theta">Launch angle&nbsp;θ</label>
+      <input id="theta" type="range" min="0" max="90" value="45" />
+      <span id="out" class="readout">45°</span>
+    </div>
+
+    <div class="row">
+      <button id="ask" type="button">Ask the agent about this →</button>
+    </div>
+
+    <p class="hint">
+      Slider → <code>ui/update-model-context</code> (violet in the log). Button →
+      <code>ui/message</code> / <code>app/notify</code> (blue).
+    </p>
+
+    <script>
+      (function () {
+        var nextId = 1;
+        var initialized = false;
+
+        function post(msg) {
+          try {
+            parent.postMessage(msg, "*");
+          } catch (e) {
+            /* standalone (opened directly) — no parent */
+          }
+        }
+        // Fire-and-forget notification (no id).
+        function notify(method, params) {
+          post({ jsonrpc: "2.0", method: method, params: params || {} });
+        }
+        // Request/response (has id) — resolves when the host replies.
+        function request(method, params) {
+          return new Promise(function (resolve) {
+            var id = nextId++;
+            function onMsg(ev) {
+              var d = ev.data;
+              if (!d || d.id !== id) return;
+              window.removeEventListener("message", onMsg);
+              resolve(d.result);
+            }
+            window.addEventListener("message", onMsg);
+            post({ jsonrpc: "2.0", id: id, method: method, params: params || {} });
+          });
+        }
+
+        // Answer host pings so the bridge considers us alive.
+        window.addEventListener("message", function (ev) {
+          var d = ev.data;
+          if (d && d.method === "ping" && d.id != null) {
+            post({ jsonrpc: "2.0", id: d.id, result: {} });
+          }
+        });
+
+        // Tell the host how tall we are so the iframe fits our content —
+        // AppFrame defaults to 600px and only shrinks on this notification.
+        function reportSize() {
+          var h = Math.ceil(document.documentElement.scrollHeight);
+          notify("ui/notifications/size-changed", { height: h });
+        }
+
+        var slider = document.getElementById("theta");
+        var out = document.getElementById("out");
+        var debounce;
+
+        // update-model-context is sent as a REQUEST (has an id), not a
+        // notification. That's the channel the host actually surfaces: in chat
+        // it drives the POST to /iframe-context so the AGENT sees the value on
+        // its next turn; on /dev it fires onModelContextUpdate. (A notification
+        // would reach neither — only a raw wire sniffer.)
+        function pushAngle(value) {
+          request("ui/update-model-context", {
+            structuredContent: { control: "launch-angle", thetaDegrees: value },
+          });
+        }
+
+        slider.addEventListener("input", function () {
+          var v = Number(slider.value);
+          out.textContent = v + "°";
+          clearTimeout(debounce);
+          debounce = setTimeout(function () {
+            pushAngle(v);
+          }, 150);
+        });
+
+        document.getElementById("ask").addEventListener("click", function () {
+          request("ui/message", {
+            type: "app/notify",
+            reason: "location-selected",
+            payload: { location: "the local demo widget" },
+          });
+        });
+
+        // Best-effort MCP Apps handshake, THEN report size + announce initial
+        // state (so pushes go out once the bridge is ready). Timeout fallback
+        // keeps the widget working even if the host is slow to answer init.
+        Promise.race([
+          request("ui/initialize", { capabilities: {} }),
+          new Promise(function (r) {
+            setTimeout(r, 600);
+          }),
+        ]).then(function () {
+          notify("ui/notifications/initialized", {});
+          initialized = true;
+          reportSize();
+          pushAngle(Number(slider.value));
+        });
+
+        // Re-report size if the layout ever changes (defensive; our content is
+        // fixed-height, but resizes shouldn't leave the iframe oversized).
+        if (typeof ResizeObserver !== "undefined") {
+          new ResizeObserver(reportSize).observe(document.documentElement);
+        }
+      })();
+    </script>
+  </body>
+</html>

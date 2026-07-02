@@ -6,30 +6,25 @@
 // through the same notification adapter, so you can exercise the bridge
 // without a running iframe.
 //
+// SERVER SELECTOR (see _shared.tsx): pick which MCP server the iframe connects
+// to — the local map-server (:3001, connected directly) or the live AIPLA sims
+// (via the same-origin dev proxy). When nothing renders, the box shows WHY
+// (connection status + how to run the server) plus the router's own
+// renderDiagnostics — never a silent blank.
+//
 // Run: open http://localhost:3456/dev/mcp-apps/active
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MCPAppToolCallRouter } from "@/components/protocols/MCPAppToolCallRouter";
 import { notificationToChatMessage } from "@/components/protocols/mcpAppNotificationAdapter";
-import type { ToolCallState } from "@/hooks/useSkillAgent";
-import showMapResult from "@/components/protocols/__tests__/fixtures/map-server-show-map-result.json";
-
-const FIXTURE_TOOL_CALL: ToolCallState = {
-  id: "fixture-show-map-1",
-  name: "show-map",
-  status: "success",
-  parentMessageId: "fixture-asst-1",
-  argsJson: JSON.stringify({
-    west: 11.4,
-    south: 48.0,
-    east: 11.7,
-    north: 48.2,
-    label: "Munich",
-  }),
-  resultContent: JSON.stringify(showMapResult.result),
-};
+import {
+  McpConnectionNote,
+  McpServerSelector,
+  SERVER_OPTIONS,
+  useDevMcpConnection,
+} from "../_shared";
 
 interface SyntheticNotification {
   label: string;
@@ -61,13 +56,49 @@ const SYNTHETIC_NOTIFICATIONS: readonly SyntheticNotification[] = [
 
 interface LogEntry {
   ts: number;
-  source: "iframe-bridge" | "synthetic-button";
+  // "iframe-bridge"        → app/notify message (map-server), adapter-translated
+  // "iframe-model-context" → ui/update-model-context push (AIPLA sims) — sniffed
+  //                          off the wire (it's a notification the SDK doesn't surface)
+  // "iframe-wire"          → other guest→host protocol frames (handshake, etc.)
+  // "synthetic-button"     → the buttons below, bypassing the iframe
+  source:
+    | "iframe-bridge"
+    | "iframe-model-context"
+    | "iframe-wire"
+    | "synthetic-button";
   notificationLabel?: string;
   translated: string | null;
 }
 
+// Per-source chip: the wire method name + a colour, so the log visibly maps
+// each entry to one of the channels explained in the legend.
+const SOURCE_META: Record<
+  LogEntry["source"],
+  { chip: string; cls: string }
+> = {
+  "iframe-bridge": {
+    chip: "app/notify",
+    cls: "border-blue-300 bg-blue-100 text-blue-700",
+  },
+  "iframe-model-context": {
+    chip: "ui/update-model-context",
+    cls: "border-violet-300 bg-violet-100 text-violet-700",
+  },
+  "iframe-wire": {
+    chip: "wire",
+    cls: "border-emerald-300 bg-emerald-50 text-emerald-700",
+  },
+  "synthetic-button": {
+    chip: "synthetic",
+    cls: "border-border bg-muted text-muted-foreground",
+  },
+};
+
 export default function McpAppsActivePage() {
   const [log, setLog] = useState<LogEntry[]>([]);
+  const [selectedId, setSelectedId] = useState<string>(SERVER_OPTIONS[0].id);
+  const { selected, devClient, connState, connError } =
+    useDevMcpConnection(selectedId);
 
   function appendLog(entry: Omit<LogEntry, "ts">) {
     setLog((prev) => [...prev, { ...entry, ts: Date.now() }]);
@@ -86,6 +117,63 @@ export default function McpAppsActivePage() {
     setLog([]);
   }
 
+  // Raw wire sniffer — the reliable way to see the model-context channel.
+  // boldkast pushes `ui/update-model-context` as a JSON-RPC *notification*
+  // (no id) via window.parent.postMessage. AppRenderer only exposes callbacks
+  // for *requests* (onFallbackRequest) and app/notify (onMessage), so those
+  // notifications never reach a React handler — that's gotcha #18. But the
+  // sandbox relays every guest frame to THIS window verbatim
+  // (infrastructure/mcp-sandbox/src/sandbox.ts → window.parent.postMessage),
+  // so we listen on the host window directly. We only log NOTIFICATIONS here
+  // (no id); request-shaped frames are already handled by the router callbacks
+  // above, so this never double-logs them.
+  useEffect(() => {
+    function onWire(event: MessageEvent) {
+      // The `jsonrpc: "2.0"` shape is a strong enough filter on its own —
+      // Next HMR / React-DevTools postMessages don't carry it — so we DON'T
+      // hard-filter on origin. (Origin-filtering here once silently swallowed
+      // everything when the sandbox URL didn't match; the shape check is safer.)
+      const data = event.data as {
+        jsonrpc?: string;
+        id?: unknown;
+        method?: unknown;
+        params?: unknown;
+      } | null;
+      if (!data || typeof data !== "object" || data.jsonrpc !== "2.0") return;
+      if (data.id !== undefined) return; // a request/response — handled elsewhere
+      const method = data.method;
+      if (typeof method !== "string") return;
+
+      if (method === "ui/update-model-context") {
+        const params = (data.params ?? {}) as { structuredContent?: unknown };
+        setLog((prev) => [
+          ...prev,
+          {
+            ts: Date.now(),
+            source: "iframe-model-context",
+            translated: JSON.stringify(params.structuredContent ?? params),
+          },
+        ]);
+      } else {
+        // Handshake / protocol frames (…/initialized, proxy-ready, …) — dim
+        // wire entries so the pipeline is visible without dominating the log.
+        const raw = JSON.stringify(data.params ?? {});
+        setLog((prev) => [
+          ...prev,
+          {
+            ts: Date.now(),
+            source: "iframe-wire",
+            notificationLabel: method,
+            translated: raw.length > 120 ? `${raw.slice(0, 117)}…` : raw,
+          },
+        ]);
+      }
+    }
+
+    window.addEventListener("message", onWire);
+    return () => window.removeEventListener("message", onWire);
+  }, []);
+
   return (
     <main className="mx-auto max-w-3xl space-y-6 p-8">
       <header className="space-y-1">
@@ -98,16 +186,48 @@ export default function McpAppsActivePage() {
         </p>
       </header>
 
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">MCP server</h2>
+        <p className="text-xs text-muted-foreground">
+          Choose which server the iframe connects to. If nothing renders, the
+          box below explains why.
+        </p>
+        <McpServerSelector selectedId={selectedId} onSelect={setSelectedId} />
+      </section>
+
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">Iframe (real bridge)</h2>
+        <p className="text-xs text-muted-foreground">
+          Interact with the widget (drag a boldkast slider) and watch the log
+          below — see <em>The two iframe→host channels</em> for what fires and
+          why.
+        </p>
         <div className="rounded border p-3">
-          <MCPAppToolCallRouter
-            toolCalls={[FIXTURE_TOOL_CALL]}
-            mcpServerIds={["ext-apps-map"]}
-            onChatMessage={(text) =>
-              appendLog({ source: "iframe-bridge", translated: text })
-            }
+          <McpConnectionNote
+            selected={selected}
+            connState={connState}
+            connError={connError}
           />
+          {connState === "connected" && devClient && (
+            <MCPAppToolCallRouter
+              key={selected.id}
+              toolCalls={[selected.toolCall]}
+              mcpServerIds={[selected.serverId]}
+              devClient={devClient}
+              renderDiagnostics
+              onChatMessage={(text) =>
+                appendLog({ source: "iframe-bridge", translated: text })
+              }
+              onModelContextUpdate={(u) =>
+                appendLog({
+                  source: "iframe-model-context",
+                  translated: JSON.stringify(
+                    u.structuredContent ?? u.content ?? {},
+                  ),
+                })
+              }
+            />
+          )}
         </div>
       </section>
 
@@ -140,29 +260,88 @@ export default function McpAppsActivePage() {
         </div>
       </section>
 
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">The two iframe→host channels</h2>
+        <p className="text-xs text-muted-foreground">
+          MCP Apps hosts agree on how to <em>render</em> a widget, but differ on
+          the interaction back-channel (protocol-gotchas #18). A widget can talk
+          back two ways — the log tags every message with which one it used:
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1 rounded border p-3">
+            <span
+              className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${SOURCE_META["iframe-bridge"].cls}`}
+            >
+              app/notify
+            </span>
+            <p className="text-xs text-muted-foreground">
+              {'"'}Please start a chat turn.{'"'} The host adapter translates it
+              into a message the user would have typed.{" "}
+              <strong>Map-server:</strong> click a place →{" "}
+              <em>{'"'}Tell me more about Munich.{'"'}</em>
+            </p>
+          </div>
+          <div className="space-y-1 rounded border p-3">
+            <span
+              className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${SOURCE_META["iframe-model-context"].cls}`}
+            >
+              ui/update-model-context
+            </span>
+            <p className="text-xs text-muted-foreground">
+              {'"'}Here{"'"}s what{"'"}s on screen / what I just did.{'"'} No chat
+              turn — it updates the agent{"'"}s next-turn context.{" "}
+              <strong>AIPLA sims:</strong> drag a slider → structured state
+              pushed. This is what <strong>boldkast</strong> fires.
+            </p>
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          The catch (this is the deep half of #18): boldkast sends{" "}
+          <code>ui/update-model-context</code> as a raw JSON-RPC{" "}
+          <em>notification</em>, and <code>@mcp-ui/client</code> only surfaces{" "}
+          <em>requests</em> to the host — so the SDK callbacks never see it. This
+          page sniffs the sandbox↔host <code>postMessage</code> wire directly to
+          show it. That{"'"}s exactly why {'"'}the model stays blind{'"'} in some
+          hosts even though the widget renders.
+        </p>
+      </section>
+
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">Adapter log</h2>
+        <h2 className="text-lg font-semibold">Message log</h2>
         {log.length === 0 ? (
           <p className="text-sm text-muted-foreground italic">
-            No notifications yet. Click a button above or interact with
-            the iframe to see what the adapter translated.
+            No messages yet. Drag a boldkast slider (or click a synthetic button)
+            to see which channel each interaction uses.
           </p>
         ) : (
           <ol className="space-y-2 rounded border bg-muted/30 p-3 font-mono text-xs">
-            {log.map((entry, i) => (
-              <li key={i} className="border-l-2 border-primary pl-2">
-                <span className="text-muted-foreground">
-                  [{new Date(entry.ts).toLocaleTimeString()}] {entry.source}
-                  {entry.notificationLabel ? ` (${entry.notificationLabel})` : ""}{" "}
-                  →{" "}
-                </span>
-                {entry.translated === null ? (
-                  <span className="text-muted-foreground">null (adapter ignored)</span>
-                ) : (
-                  <span className="text-primary">{entry.translated}</span>
-                )}
-              </li>
-            ))}
+            {log.map((entry, i) => {
+              const meta = SOURCE_META[entry.source];
+              return (
+                <li key={i} className="flex items-start gap-2 border-l-2 border-primary pl-2">
+                  <span
+                    className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${meta.cls}`}
+                    title={entry.source}
+                  >
+                    {meta.chip}
+                  </span>
+                  <span className="min-w-0 break-words">
+                    <span className="text-muted-foreground">
+                      [{new Date(entry.ts).toLocaleTimeString()}]
+                      {entry.notificationLabel ? ` ${entry.notificationLabel}` : ""}{" "}
+                      →{" "}
+                    </span>
+                    {entry.translated === null ? (
+                      <span className="text-muted-foreground">
+                        null (adapter ignored)
+                      </span>
+                    ) : (
+                      <span className="text-primary">{entry.translated}</span>
+                    )}
+                  </span>
+                </li>
+              );
+            })}
           </ol>
         )}
       </section>

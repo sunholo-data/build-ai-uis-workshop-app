@@ -119,7 +119,9 @@ describe("A2UISurfaceMount", () => {
     );
     expect(registryHandle!.getPolicy("sidebar").persistence).toBe("indefinite");
     // Other fields keep their defaults
-    expect(registryHandle!.getPolicy("sidebar").requiresUserGesture).toBe(false);
+    expect(registryHandle!.getPolicy("sidebar").requiresUserGesture).toBe(
+      false,
+    );
   });
 
   it("logs an error and refuses if two A2UISurfaceMounts share the same surfaceId", () => {
@@ -320,6 +322,65 @@ describe("A2UISurfaceMount — triggerOnAction prop (ACTION-TRIGGER M2)", () => 
     expect(fetchWithAuthSpy).not.toHaveBeenCalled();
   });
 
+  it("triggerOnAction={true}: shows a 'Working…' overlay while the run is in flight and clears it when the run resolves", async () => {
+    // Hold the run open so the in-flight UI is observable, then release it.
+    let releaseRun: () => void = () => {};
+    triggerActionSpy.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseRun = resolve;
+        }),
+    );
+
+    let registryHandle: ReturnType<typeof useSurfaceRegistry> | null = null;
+    function Capture() {
+      registryHandle = useSurfaceRegistry();
+      return null;
+    }
+    const { container } = render(
+      wrap(
+        <>
+          <Capture />
+          <A2UISurfaceMount
+            surfaceId="workspace"
+            sessionId="sess-1"
+            skillId="skill-x"
+            triggerOnAction={true}
+          />
+        </>,
+      ),
+    );
+    act(() => pushSurface(registryHandle!, "workspace"));
+    const surface = registryHandle!.getState("workspace")?.surface!;
+
+    // No overlay before any click.
+    expect(
+      container.querySelector('[data-testid="a2ui-surface-running"]'),
+    ).toBeNull();
+
+    // Fire the action but don't await the (still-pending) run.
+    act(() => {
+      void surface.dispatchAction({ event: { name: "increment" } }, "btn-1");
+    });
+
+    // Overlay is shown while the run is in flight.
+    await waitFor(() => {
+      expect(
+        container.querySelector('[data-testid="a2ui-surface-running"]'),
+      ).toBeTruthy();
+    });
+
+    // Release the run — the overlay clears.
+    await act(async () => {
+      releaseRun();
+    });
+    await waitFor(() => {
+      expect(
+        container.querySelector('[data-testid="a2ui-surface-running"]'),
+      ).toBeNull();
+    });
+  });
+
   it("triggerOnAction={true} but skillId missing: drops silently in dev — surface stays put, no POST, no triggerAction call", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     let registryHandle: ReturnType<typeof useSurfaceRegistry> | null = null;
@@ -349,5 +410,197 @@ describe("A2UISurfaceMount — triggerOnAction prop (ACTION-TRIGGER M2)", () => 
     expect(fetchWithAuthSpy).not.toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalled();
     warnSpy.mockRestore();
+  });
+});
+
+// ─── TRUST-UI: the default-path action receipt strip ──────────────────────
+
+describe("A2UISurfaceMount — action trust strip (TRUST-UI)", () => {
+  const TRUST = '[data-testid="a2ui-action-trust"]';
+
+  it("default path: shows 'sending' echoing the payload, then flips to 'sent' when the write lands", async () => {
+    // Hold the POST open so the transient 'sending' state is observable.
+    let releaseFetch: () => void = () => {};
+    fetchWithAuthSpy.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          releaseFetch = () =>
+            resolve(new Response(null, { status: 204 }) as Response);
+        }),
+    );
+
+    let registryHandle: ReturnType<typeof useSurfaceRegistry> | null = null;
+    function Capture() {
+      registryHandle = useSurfaceRegistry();
+      return null;
+    }
+    const { container } = render(
+      wrap(
+        <>
+          <Capture />
+          <A2UISurfaceMount surfaceId="workspace" sessionId="sess-1" />
+        </>,
+      ),
+    );
+    act(() => pushSurface(registryHandle!, "workspace"));
+    const surface = registryHandle!.getState("workspace")?.surface!;
+
+    // No strip before any click.
+    expect(container.querySelector(TRUST)).toBeNull();
+
+    // The binder resolves `{path: "/formInput"}` to the typed string before
+    // dispatch, so the action context arrives with the literal value.
+    act(() => {
+      void surface.dispatchAction(
+        { event: { name: "submit", context: { value: "hello world" } } },
+        "submit-btn",
+      );
+    });
+
+    // 'sending' strip shows the exact payload the assistant will receive.
+    await waitFor(() => {
+      const strip = container.querySelector(TRUST);
+      expect(strip).toBeTruthy();
+      expect(strip?.getAttribute("data-trust-status")).toBe("sending");
+    });
+    expect(container.querySelector(TRUST)?.textContent).toContain("submit");
+    expect(container.querySelector(TRUST)?.textContent).toContain(
+      "hello world",
+    );
+
+    // Release the POST — strip flips to the 'sent' confirmation.
+    await act(async () => {
+      releaseFetch();
+    });
+    await waitFor(() => {
+      expect(
+        container.querySelector(TRUST)?.getAttribute("data-trust-status"),
+      ).toBe("sent");
+    });
+    expect(container.querySelector(TRUST)?.textContent).toContain(
+      "next message",
+    );
+  });
+
+  it("default path: drops the strip when the skill hasn't opted in (403) — preserves the pre-trust silent UX", async () => {
+    fetchWithAuthSpy.mockResolvedValue(
+      new Response(null, { status: 403 }) as Response,
+    );
+    let registryHandle: ReturnType<typeof useSurfaceRegistry> | null = null;
+    function Capture() {
+      registryHandle = useSurfaceRegistry();
+      return null;
+    }
+    const { container } = render(
+      wrap(
+        <>
+          <Capture />
+          <A2UISurfaceMount surfaceId="workspace" sessionId="sess-1" />
+        </>,
+      ),
+    );
+    act(() => pushSurface(registryHandle!, "workspace"));
+    const surface = registryHandle!.getState("workspace")?.surface!;
+
+    await act(async () => {
+      await surface.dispatchAction({ event: { name: "submit" } }, "btn-1");
+    });
+
+    await waitFor(() => {
+      expect(fetchWithAuthSpy).toHaveBeenCalledOnce();
+    });
+    // After the 403 resolves the strip is gone (never claims a receipt).
+    await waitFor(() => {
+      expect(container.querySelector(TRUST)).toBeNull();
+    });
+  });
+
+  it("shows an 'error' strip when the write fails outright (network/5xx)", async () => {
+    fetchWithAuthSpy.mockRejectedValue(new Error("network down"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let registryHandle: ReturnType<typeof useSurfaceRegistry> | null = null;
+    function Capture() {
+      registryHandle = useSurfaceRegistry();
+      return null;
+    }
+    const { container } = render(
+      wrap(
+        <>
+          <Capture />
+          <A2UISurfaceMount surfaceId="workspace" sessionId="sess-1" />
+        </>,
+      ),
+    );
+    act(() => pushSurface(registryHandle!, "workspace"));
+    const surface = registryHandle!.getState("workspace")?.surface!;
+    await act(async () => {
+      await surface.dispatchAction({ event: { name: "submit" } }, "btn-1");
+    });
+    await waitFor(() => {
+      expect(
+        container.querySelector(TRUST)?.getAttribute("data-trust-status"),
+      ).toBe("error");
+    });
+    warnSpy.mockRestore();
+  });
+
+  it("showActionTrust={false}: default path stays silent — no strip even after a click", async () => {
+    let registryHandle: ReturnType<typeof useSurfaceRegistry> | null = null;
+    function Capture() {
+      registryHandle = useSurfaceRegistry();
+      return null;
+    }
+    const { container } = render(
+      wrap(
+        <>
+          <Capture />
+          <A2UISurfaceMount
+            surfaceId="workspace"
+            sessionId="sess-1"
+            showActionTrust={false}
+          />
+        </>,
+      ),
+    );
+    act(() => pushSurface(registryHandle!, "workspace"));
+    const surface = registryHandle!.getState("workspace")?.surface!;
+    await act(async () => {
+      await surface.dispatchAction({ event: { name: "submit" } }, "btn-1");
+    });
+    await waitFor(() => {
+      expect(fetchWithAuthSpy).toHaveBeenCalledOnce();
+    });
+    expect(container.querySelector(TRUST)).toBeNull();
+  });
+
+  it("triggerOnAction={true}: no trust strip — that path shows the 'Working…' overlay instead", async () => {
+    triggerActionSpy.mockResolvedValue(undefined);
+    let registryHandle: ReturnType<typeof useSurfaceRegistry> | null = null;
+    function Capture() {
+      registryHandle = useSurfaceRegistry();
+      return null;
+    }
+    const { container } = render(
+      wrap(
+        <>
+          <Capture />
+          <A2UISurfaceMount
+            surfaceId="workspace"
+            sessionId="sess-1"
+            skillId="skill-x"
+            triggerOnAction={true}
+          />
+        </>,
+      ),
+    );
+    act(() => pushSurface(registryHandle!, "workspace"));
+    const surface = registryHandle!.getState("workspace")?.surface!;
+    await act(async () => {
+      await surface.dispatchAction({ event: { name: "increment" } }, "btn-1");
+    });
+    await waitFor(() => {
+      expect(triggerActionSpy).toHaveBeenCalledOnce();
+    });
+    expect(container.querySelector(TRUST)).toBeNull();
   });
 });

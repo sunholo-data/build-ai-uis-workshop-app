@@ -19,9 +19,18 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="font-sans bg-background text-foreground min-h-screen antialiased">
+      {/*
+        App shell: a fixed-height flex column so the LocalModeBanner takes its
+        natural height and the page content fills the rest. Without this the
+        banner is a normal block stacked ABOVE a 100vh chat page, pushing the
+        chat input below the fold (you had to scroll to reach it in LOCAL_MODE).
+        Pages scroll inside the flex-1 region instead of the document.
+      */}
+      <body className="font-sans bg-background text-foreground antialiased flex h-screen flex-col overflow-hidden">
         <LocalModeBanner />
-        <AppProviders>{children}</AppProviders>
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <AppProviders>{children}</AppProviders>
+        </div>
       </body>
     </html>
   );

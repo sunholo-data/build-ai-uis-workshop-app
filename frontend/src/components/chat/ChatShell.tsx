@@ -721,7 +721,7 @@ export function ChatShell({
   return (
     <SurfaceRegistryProvider>
     <SurfaceSessionLifecycle sessionId={sessionId} />
-    <main className="flex h-screen flex-col">
+    <main className="flex h-full flex-col">
       <SkillsBar
         skills={userSkills}
         activeSkillId={skillId}

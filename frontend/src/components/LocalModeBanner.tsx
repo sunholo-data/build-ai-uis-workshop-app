@@ -39,7 +39,7 @@ export function LocalModeBanner() {
     <div
       role="status"
       aria-label="LOCAL_MODE active"
-      className="w-full bg-yellow-100 border-b border-yellow-300 text-yellow-900 text-xs px-4 py-2 flex items-center gap-4 flex-wrap"
+      className="w-full shrink-0 bg-yellow-100 border-b border-yellow-300 text-yellow-900 text-xs px-4 py-2 flex items-center gap-4 flex-wrap"
     >
       <span className="font-medium">
         🛠️ LOCAL_MODE — All data is in-memory and ephemeral. Auth is stubbed.

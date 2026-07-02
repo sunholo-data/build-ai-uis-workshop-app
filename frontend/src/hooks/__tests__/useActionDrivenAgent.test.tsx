@@ -361,6 +361,67 @@ describe("useActionDrivenAgent", () => {
     expect(body.forwardedProps).toEqual({ a2ui_surface_state: {} });
   });
 
+  it("onWire tap: reports the sent POST body and every received SSE frame, plus the derived A2UI batch", async () => {
+    const a2uiMessages = [
+      {
+        version: "v0.9",
+        createSurface: { surfaceId: "workspace", catalogId: "basic" },
+      },
+    ];
+    const envelope = JSON.stringify({
+      validated_a2ui_json: a2uiMessages,
+      surface_id: "workspace",
+    });
+    fetchWithAuth.mockResolvedValueOnce(
+      sseResponse([
+        frame({ type: "RUN_STARTED", threadId: "s", runId: "r" }),
+        frame({
+          type: "TOOL_CALL_START",
+          toolCallId: "tc-1",
+          toolCallName: "send_a2ui_json_to_client",
+        }),
+        frame({ type: "TOOL_CALL_ARGS", toolCallId: "tc-1", delta: "{}" }),
+        frame({
+          type: "TOOL_CALL_RESULT",
+          messageId: "m-1",
+          toolCallId: "tc-1",
+          content: envelope,
+        }),
+        frame({ type: "RUN_FINISHED", threadId: "s", runId: "r" }),
+      ]),
+    );
+
+    const wire: { dir: string; label: string; payload: unknown }[] = [];
+    const { result } = renderHook(() =>
+      useActionDrivenAgent({
+        skillId: "skill-x",
+        sessionId: "sess-1",
+        onWire: (e) => wire.push(e),
+      }),
+    );
+
+    await result.current.triggerAction("workspace", { name: "increment" });
+
+    // First frame is the outgoing POST body.
+    expect(wire[0]).toMatchObject({
+      dir: "sent",
+      label: "POST surface-action-run",
+    });
+    expect(wire[0].payload).toMatchObject({ surfaceId: "workspace" });
+
+    // Every AG-UI event type is reported in order.
+    const recvLabels = wire.filter((e) => e.dir === "recv").map((e) => e.label);
+    expect(recvLabels).toContain("RUN_STARTED");
+    expect(recvLabels).toContain("TOOL_CALL_START");
+    expect(recvLabels).toContain("RUN_FINISHED");
+    // Plus the derived "unwrapped A2UI batch" frame that re-renders the surface.
+    const derived = wire.find(
+      (e) => e.label === "send_a2ui_json_to_client → A2UI messages",
+    );
+    expect(derived).toBeDefined();
+    expect(derived?.payload).toEqual(a2uiMessages);
+  });
+
   it("handles SSE frames split across read() chunks (buffer reassembly)", async () => {
     // Simulate a server flushing a frame in two write() calls. The
     // reader's `\n\n` split must reassemble across the chunk boundary.

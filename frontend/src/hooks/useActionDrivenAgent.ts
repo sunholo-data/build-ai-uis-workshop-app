@@ -28,7 +28,7 @@
 
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { fetchWithAuth } from "@/lib/apiClient";
 import { useSurfaceRegistry } from "@/providers/SurfaceRegistry";
 
@@ -40,11 +40,36 @@ export interface ActionDrivenAgentAction {
   context?: Record<string, unknown>;
 }
 
+/** Direction of an observed wire frame, for the /dev/a2ui inspector. */
+export type WireDirection = "sent" | "recv";
+
+/**
+ * One frame observed on the action-triggered-run wire, handed to an
+ * optional `onWire` observer so a dev/teaching page can render exactly
+ * what leaves the client and what streams back. Purely observational —
+ * the hook behaves identically whether or not `onWire` is provided.
+ */
+export interface WireEvent {
+  dir: WireDirection;
+  /** Short protocol label, e.g. "POST surface-action-run", "RUN_STARTED". */
+  label: string;
+  /** Full payload for the inspector's expandable JSON view. */
+  payload: unknown;
+}
+
 export interface UseActionDrivenAgentArgs {
   /** Skill id — used in the endpoint URL. */
   skillId: string;
   /** Session id — also used in the endpoint URL. */
   sessionId: string;
+  /**
+   * Optional wire observer. When provided, the hook reports each frame it
+   * sends (the POST body) and every AG-UI SSE event it receives, plus a
+   * derived entry for the A2UI message batch it applies to the surface.
+   * Used by `/dev/a2ui` to make the request/response loop visible; a no-op
+   * anywhere it's omitted, and it never changes the hook's behaviour.
+   */
+  onWire?: (event: WireEvent) => void;
 }
 
 export interface UseActionDrivenAgentReturn {
@@ -161,8 +186,18 @@ async function* readSSE(
 export function useActionDrivenAgent({
   skillId,
   sessionId,
+  onWire,
 }: UseActionDrivenAgentArgs): UseActionDrivenAgentReturn {
   const registry = useSurfaceRegistry();
+
+  // Keep the observer in a ref so `triggerAction`'s identity stays stable
+  // even when the caller passes a fresh `onWire` closure each render (the
+  // /dev/a2ui page does). A2UISurfaceMount's action subscription keys off
+  // triggerAction, so churning its identity would re-subscribe every render.
+  const onWireRef = useRef(onWire);
+  useEffect(() => {
+    onWireRef.current = onWire;
+  }, [onWire]);
 
   const triggerAction = useCallback(
     async (
@@ -179,6 +214,13 @@ export function useActionDrivenAgent({
         action,
         forwardedProps: { a2ui_surface_state: surfaceSnapshot },
       };
+
+      // Observational tap: exactly what leaves the client on the click.
+      onWireRef.current?.({
+        dir: "sent",
+        label: "POST surface-action-run",
+        payload: body,
+      });
 
       const doPost = () =>
         fetchWithAuth(url, {
@@ -270,6 +312,11 @@ export function useActionDrivenAgent({
         const type = event.type;
         if (typeof type !== "string") continue;
 
+        // Observational tap: report every frame the agent streams back, so
+        // the inspector shows the raw AG-UI event sequence (RUN_STARTED →
+        // TOOL_CALL_* → RUN_FINISHED), not just the final surface.
+        onWireRef.current?.({ dir: "recv", label: type, payload: event });
+
         switch (type) {
           case "TOOL_CALL_START": {
             const toolCallId = event.toolCallId;
@@ -297,6 +344,14 @@ export function useActionDrivenAgent({
             if (!entry || entry.name !== A2UI_TOOL_NAME) break;
             const parsed = parseA2uiToolResult(content, surfaceId);
             if (!parsed) break;
+            // Derived tap: the re-emitted A2UI batch, unwrapped from the
+            // tool-result envelope — the frame that actually re-renders the
+            // surface. Makes the "click → new UI" round trip explicit.
+            onWireRef.current?.({
+              dir: "recv",
+              label: `${A2UI_TOOL_NAME} → A2UI messages`,
+              payload: parsed.messages,
+            });
             // Dispatch through the same SurfaceRegistry path the chat
             // bubble's A2UISurfaceDispatcher uses. Idempotent on tool
             // call id — strict-mode double-effects are absorbed inside

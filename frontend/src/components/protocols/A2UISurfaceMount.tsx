@@ -43,7 +43,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { A2uiSurface } from "@a2ui/react/v0_9";
 import { fetchWithAuth } from "@/lib/apiClient";
-import { useActionDrivenAgent } from "@/hooks/useActionDrivenAgent";
+import {
+  useActionDrivenAgent,
+  type WireEvent,
+} from "@/hooks/useActionDrivenAgent";
 import {
   type SurfacePolicy,
   useSurfaceRegistry,
@@ -94,6 +97,13 @@ export interface A2UISurfaceMountProps {
    * original silent behaviour.
    */
   showActionTrust?: boolean;
+  /**
+   * Optional wire observer, forwarded to `useActionDrivenAgent`. Only the
+   * `triggerOnAction` path emits — `/dev/a2ui` uses it to render the
+   * request/response loop (the POST body + streamed AG-UI events). Omit it
+   * everywhere else; it never affects rendering or dispatch.
+   */
+  onWire?: (event: WireEvent) => void;
 }
 
 /** TRUST-UI: lifecycle of the payload the assistant is about to receive. */
@@ -124,6 +134,7 @@ export function A2UISurfaceMount({
   skillId,
   triggerOnAction = false,
   showActionTrust = true,
+  onWire,
 }: A2UISurfaceMountProps) {
   const ref = useRef<HTMLDivElement>(null);
   const registry = useSurfaceRegistry();
@@ -147,6 +158,7 @@ export function A2UISurfaceMount({
   const { triggerAction } = useActionDrivenAgent({
     skillId: skillId ?? "",
     sessionId: sessionId ?? "",
+    onWire,
   });
 
   // Click-spam guard. An action-triggered run is a FULL agent turn (LLM

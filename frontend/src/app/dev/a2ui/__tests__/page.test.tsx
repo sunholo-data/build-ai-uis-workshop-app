@@ -54,7 +54,7 @@ afterEach(() => {
 describe("/dev/a2ui Pattern 1 — Click-Driven section", () => {
   it("renders the page heading and the Pattern 1 section", () => {
     render(<A2uiDevPage />);
-    expect(screen.getByText(/A2UI fixture playground/i)).toBeInTheDocument();
+    expect(screen.getByText(/A2UI × AG-UI playground/i)).toBeInTheDocument();
     const section = screen.getByTestId("pattern1-section");
     expect(section).toBeInTheDocument();
     expect(section.textContent).toContain("Pattern 1 — Click-Driven AI UI");
@@ -86,6 +86,29 @@ describe("/dev/a2ui Pattern 1 — Click-Driven section", () => {
     // we ever rename the skill, this guard catches it.
     expect(section.textContent).toContain("demo-click-counter");
     expect(section.textContent).toContain("pattern1-fixture-001");
+  });
+
+  it("wire log seeds with the three A2UI message kinds so the initial surface build is visible", async () => {
+    render(<A2uiDevPage />);
+    const log = screen.getByTestId("a2ui-wire-log");
+    expect(log).toBeInTheDocument();
+    // The seeder logs each hand-fed A2UI message once (guarded against
+    // strict-mode double-logging), tagged as `seed`. All three v0.9
+    // operation kinds should appear so the surface build reads on the wire.
+    await waitFor(() => {
+      const seeds = log.querySelectorAll('[data-wire-kind="seed"]');
+      expect(seeds.length).toBe(3);
+    });
+    expect(log.textContent).toContain("createSurface");
+    expect(log.textContent).toContain("updateComponents");
+    expect(log.textContent).toContain("updateDataModel");
+    // Seed frames are the declarative surface → tagged A2UI, and each carries
+    // a plain-English "why it fires" line, not just the op name.
+    const seeds = log.querySelectorAll('[data-wire-protocol="A2UI"]');
+    expect(seeds.length).toBe(3);
+    expect(log.textContent).toContain(
+      "Declares an empty A2UI surface",
+    );
   });
 });
 

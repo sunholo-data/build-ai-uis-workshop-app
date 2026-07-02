@@ -67,16 +67,23 @@ edit the JSON and watch it change. No agent, no key.
 > A2UI turns UI into declarative data the agent produces. One renderer draws anything,
 > so a new interface is new JSON — not new frontend code and a deploy.
 
-## Go further (optional)
+## Go further (optional): data binding
 
-Bind text to data instead of a literal — still on `main`, in the same file. Point a
-component at a path, then supply it in `updateDataModel`:
+The counter line is already data-bound — use it as the template. Two pieces, in two of
+the seed messages:
 
 ```ts
-// component: text now reads from the data model
-{ id: "title", component: "Text", text: { path: "/heading" }, variant: "h2" },
-// updateDataModel message: add the key to `value`
-value: { counter: 0, counterDisplay: "Clicks: 0", heading: "Bound from data" },
+// in updateComponents — the Text reads from a path, not a literal string:
+{ id: "display", component: "Text", text: { path: "/counterDisplay" } },
+
+// in the updateDataModel message — the value at that path:
+value: { counter: 0, counterDisplay: "Clicks: 0" },
 ```
 
-The title now renders whatever the data model holds at `/heading`.
+`/counterDisplay` is just the `counterDisplay` key in that `value` object. To "edit" it,
+change the string there and save — the bound Text re-renders. Bind your own the same way:
+add `heading: "Hi"` to `value`, then point a component at it with `text: { path: "/heading" }`.
+
+At runtime the agent edits the value, not the markup — each counter click sends a fresh
+`updateDataModel` with a new `counterDisplay`, and the bound Text updates without any
+components being re-sent. That's the point of binding.

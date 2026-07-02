@@ -33,10 +33,20 @@ Drop a raw iframe and wire it yourself.
    to see the adapter handle bad input.
 4. Read **The two iframe→host channels** on the page: `app/notify` → a chat turn, vs
    `ui/update-model-context` → structured on-screen state.
+5. **Teachable edit:** open
+   `frontend/src/components/protocols/mcpAppNotificationAdapter.ts`, find `locationSelected`,
+   and change the string it returns (e.g. `What's the weather in ${location}?`). Save,
+   click the **Munich** button again — the host now translates the same notification into
+   your new chat message. That's the host-side adapter that turns a widget event into a
+   chat turn.
 
-**See the second channel live** — needs `make dev-local` up: in **Iframe (real bridge)**
-pick a server and drag a **boldkast slider**. The log shows a real
-`ui/update-model-context` frame, sniffed off the wire.
+## Going further (needs `make dev-local`, or a key)
+
+- **The second channel, live** — with `make dev-local` up, open **Iframe (real bridge)**,
+  pick a server, and drag a **boldkast slider**. The log shows a real
+  `ui/update-model-context` frame, sniffed off the wire.
+- On this page the chat turn is only logged. Wired into the real chat (with a Gemini key),
+  a `ui/message` becomes an actual agent turn.
 
 ## The one-liner (your teach-back)
 

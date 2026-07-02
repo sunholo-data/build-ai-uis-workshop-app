@@ -62,6 +62,13 @@ edit the JSON and watch it change. No agent, no key.
 
 4. Save — the surface re-renders. You wrote zero React.
 
+## With an API key
+
+Click **Click me** on the surface. Now the `demo-click-counter` **agent** emits the A2UI
+itself — each click runs an agent turn that re-sends the surface with an incremented
+counter. Same protocol, but the JSON is produced by the agent at runtime, not hand-authored
+by you. (Watch it flow through the wire log — that's the AG-UI exercise.)
+
 ## The one-liner (your teach-back)
 
 > A2UI turns UI into declarative data the agent produces. One renderer draws anything,

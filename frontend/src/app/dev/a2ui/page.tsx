@@ -504,6 +504,20 @@ export default function A2uiDevPage() {
 
   const pushWire = useCallback(
     (kind: WireKind, label: string, payload: unknown) => {
+      // Mirror every frame to the browser console with the same "why" as the
+      // on-page wire log, so DevTools narrates the whole A2UI×AG-UI round trip
+      // too. This is a /dev playground — console narration is the point here.
+      const tag =
+        kind === "seed" ? "A2UI seed" : kind === "sent" ? "→ sent" : "← recv";
+      console.groupCollapsed(
+        `%c[a2ui×agui]%c ${tag} %c${label}`,
+        "color:#e73c17;font-weight:700",
+        "color:inherit;font-weight:700",
+        "color:#22c55e;font-weight:700",
+      );
+      console.log("why:    ", explainFrame(kind, label));
+      console.log("payload:", payload);
+      console.groupEnd();
       setWire((prev) => [
         ...prev,
         { id: nextIdRef.current++, ts: Date.now(), kind, label, payload },
@@ -523,6 +537,16 @@ export default function A2uiDevPage() {
     [pushWire],
   );
   const clearWire = useCallback(() => setWire([]), []);
+
+  useEffect(() => {
+    console.log(
+      "%c/dev/a2ui%c — A2UI × AG-UI playground. Click %cClick me%c on the surface and watch each wire frame log here; expand a group for its payload + why.",
+      "color:#e73c17;font-weight:700",
+      "color:inherit",
+      "font-weight:700",
+      "color:inherit",
+    );
+  }, []);
 
   return (
     <SurfaceRegistryProvider>

@@ -25,7 +25,8 @@ Drop a raw iframe and wire it yourself.
 
 ## Try it (no key)
 
-1. Open **http://localhost:3456/dev/mcp-apps/active**.
+1. Open **http://localhost:3456/dev/mcp-apps/active** (and **DevTools → Console** — every
+   channel message is narrated there too).
 2. Under **Synthetic notifications**, click **fire: location-selected (Munich)**.
 3. Watch the **Message log**: the widget's raw `app/notify` is translated by the host
    into a chat message — *"Tell me more about Munich."* That's the `ui/message` channel:

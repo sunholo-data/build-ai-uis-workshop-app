@@ -44,6 +44,7 @@ Events only exist during a live run, so with no key you read how they're handled
 2. Read the **Wire log**: `RUN_STARTED` → `TEXT_MESSAGE_CONTENT` (deltas) →
    `TOOL_CALL_START / ARGS / END` → `RUN_FINISHED`. Each row says *why* it fired — click
    one for the raw JSON. The reply is built from deltas; a tool call is its own event.
+   (Open **DevTools → Console** for the same frames, narrated — one collapsed group each.)
 3. **Teachable edit:** in `frontend/src/app/dev/a2ui/page.tsx`, find `AGUI_EVENT_WHY` and
    rewrite one event's explanation (e.g. `TOOL_CALL_RESULT`). Save, click **Click me**
    again — your text now annotates that row in the wire log.

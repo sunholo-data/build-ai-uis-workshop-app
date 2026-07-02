@@ -97,6 +97,27 @@ const SOURCE_META: Record<
   },
 };
 
+// Mirror each log entry to the browser console, tagged with its channel, so
+// DevTools narrates the two MCP-Apps back-channels too. /dev playground only.
+function logChannel(
+  source: LogEntry["source"],
+  label: string | undefined,
+  translated: string | null,
+) {
+  console.groupCollapsed(
+    `%c[mcp-apps]%c ${SOURCE_META[source].chip}${label ? ` · ${label}` : ""}`,
+    "color:#e73c17;font-weight:700",
+    "color:inherit;font-weight:700",
+  );
+  console.log(
+    source === "iframe-model-context"
+      ? "ui/update-model-context — structured state for the agent's next turn:"
+      : "→ chat turn (ui/message) the host would send:",
+    translated ?? "null (adapter ignored this shape)",
+  );
+  console.groupEnd();
+}
+
 export default function McpAppsActivePage() {
   const [log, setLog] = useState<LogEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string>(SERVER_OPTIONS[0].id);
@@ -112,7 +133,18 @@ export default function McpAppsActivePage() {
     setWidgetHeight(null);
   }, [selectedId]);
 
+  useEffect(() => {
+    console.log(
+      "%c/dev/mcp-apps/active%c — MCP Apps bridge. Click a %cSynthetic notification%c (or drag a live widget) and watch each back-channel message log here.",
+      "color:#e73c17;font-weight:700",
+      "color:inherit",
+      "font-weight:700",
+      "color:inherit",
+    );
+  }, []);
+
   function appendLog(entry: Omit<LogEntry, "ts">) {
+    logChannel(entry.source, entry.notificationLabel, entry.translated);
     setLog((prev) => [...prev, { ...entry, ts: Date.now() }]);
   }
 
@@ -121,6 +153,7 @@ export default function McpAppsActivePage() {
   // router's props and remount the sandbox iframe (proxy-ready timeout + the
   // widget resetting to 600px on every interaction).
   const handleChatMessage = useCallback((text: string) => {
+    logChannel("iframe-bridge", undefined, text);
     setLog((prev) => [
       ...prev,
       { ts: Date.now(), source: "iframe-bridge", translated: text },
@@ -128,13 +161,11 @@ export default function McpAppsActivePage() {
   }, []);
 
   const handleModelContextUpdate = useCallback((u: ModelContextUpdate) => {
+    const translated = JSON.stringify(u.structuredContent ?? u.content ?? {});
+    logChannel("iframe-model-context", undefined, translated);
     setLog((prev) => [
       ...prev,
-      {
-        ts: Date.now(),
-        source: "iframe-model-context",
-        translated: JSON.stringify(u.structuredContent ?? u.content ?? {}),
-      },
+      { ts: Date.now(), source: "iframe-model-context", translated },
     ]);
   }, []);
 

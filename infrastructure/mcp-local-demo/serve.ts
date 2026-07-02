@@ -31,7 +31,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.MCP_LOCAL_DEMO_PORT || 3001);
 const TOOL_NAME = "show-demo";
 const RESOURCE_URI = "ui://local-demo/widget/v1";
-const WIDGET_HTML = readFileSync(join(__dirname, "widget.html"), "utf8");
+// Read per-request (not cached at boot) so editing widget.html is live in dev
+// without restarting this server.
+const WIDGET_PATH = join(__dirname, "widget.html");
+const readWidgetHtml = (): string => readFileSync(WIDGET_PATH, "utf8");
 
 // Empty domain lists — the widget is self-contained (inline script/style, no
 // network). The sandbox always allows inline script/style regardless (see
@@ -83,7 +86,7 @@ function makeServer(): Server {
       {
         uri: RESOURCE_URI,
         mimeType: "text/html;profile=mcp-app",
-        text: WIDGET_HTML,
+        text: readWidgetHtml(),
         _meta: { ui: { csp: CSP } },
       },
     ],

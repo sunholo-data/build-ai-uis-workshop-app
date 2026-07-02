@@ -22,7 +22,13 @@
 import { AppRenderer } from "@mcp-ui/client";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import type { ToolCallState } from "@/hooks/useSkillAgent";
 import { fetchWithAuth } from "@/lib/apiClient";
 import { useMcpClient } from "@/lib/mcpClient";
@@ -469,6 +475,96 @@ function RoutedToolCall({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resource?.html, def?.uiResourceUri, serverId, unprefixedName, toolCall.id]);
 
+  // Stable handler identities. AppRenderer/AppFrame recreates the sandbox
+  // iframe when its props change identity; the inline arrows below used to get
+  // a fresh identity on every re-render (log/trust state updates), so each
+  // interaction tore down + remounted the iframe. That remount races the
+  // one-shot `sandbox-proxy-ready` handshake ("Timed out waiting for sandbox
+  // proxy iframe to be ready") AND — because the size-auto-resize handler only
+  // attaches after proxy-ready resolves — leaves the iframe stuck at AppFrame's
+  // 600px default. useCallback keeps them stable so the iframe mounts once.
+  const handleMessage = useCallback(
+    async (params: Record<string, unknown>) => {
+      const text = notificationToChatMessage(params);
+      if (text && onChatMessage) onChatMessage(text);
+      return {};
+    },
+    [onChatMessage],
+  );
+
+  const handleError = useCallback((err: Error) => {
+    console.warn("MCPAppToolCallRouter: AppRenderer error", err);
+  }, []);
+
+  const handleFallbackRequest = useCallback(
+    async (request: { method: string; params?: Record<string, unknown> }) => {
+      // MCP Apps spec channel #2 (sprint 1.25): the iframe pushes structured
+      // content into the agent's NEXT-turn context via ui/update-model-context.
+      // AppRenderer surfaces it through onFallbackRequest (the catch-all for
+      // JSON-RPC methods it doesn't route specifically).
+      if (request.method !== "ui/update-model-context") {
+        return {};
+      }
+      const p = (request.params ?? {}) as {
+        structuredContent?: Record<string, unknown>;
+        content?: unknown[];
+      };
+      // Surface the raw push to any observer FIRST, before the sessionId gate —
+      // /dev/* pages log it even though they have no session to POST to.
+      onModelContextUpdate?.({
+        serverId,
+        toolName: unprefixedName,
+        structuredContent: p.structuredContent ?? null,
+        content: p.content ?? null,
+      });
+      if (!sessionId) {
+        return {};
+      }
+      // TRUST-UI: optimistically show what the assistant is about to receive,
+      // then flip to a confirmation. Cleared on 403 (skill not opted in) so
+      // opt-out skills keep the pre-trust silent behaviour.
+      const summary = summarizeStructuredContent(p.structuredContent);
+      if (showContextTrust) setContextTrust({ summary, status: "sending" });
+      try {
+        const res = await fetchWithAuth(
+          `/api/proxy/api/sessions/${encodeURIComponent(sessionId)}/iframe-context`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              serverId,
+              toolName: unprefixedName,
+              structuredContent: p.structuredContent ?? null,
+              content: p.content ?? null,
+            }),
+          },
+        );
+        if (showContextTrust) {
+          if (res.ok) {
+            setContextTrust({ summary, status: "sent" });
+          } else if (res.status === 403) {
+            setContextTrust(null);
+          } else {
+            setContextTrust({ summary, status: "error" });
+          }
+        }
+        if (!res.ok && process.env.NODE_ENV !== "production") {
+          console.info(
+            `MCPAppToolCallRouter: update-model-context POST returned ${res.status}`,
+          );
+        }
+      } catch (err) {
+        if (showContextTrust) setContextTrust({ summary, status: "error" });
+        console.warn(
+          "MCPAppToolCallRouter: update-model-context POST failed",
+          err,
+        );
+      }
+      return {};
+    },
+    [onModelContextUpdate, sessionId, serverId, unprefixedName, showContextTrust],
+  );
+
   // Each guard preserves the production contract (return null) when
   // renderDiagnostics is off; the dev branch explains what state we're stuck in.
   if (!client) {
@@ -559,95 +655,9 @@ function RoutedToolCall({
       toolResult={toolResult}
       html={resource.html}
       sandbox={sandboxConfig}
-      onMessage={async (params) => {
-        const text = notificationToChatMessage(params);
-        if (text && onChatMessage) onChatMessage(text);
-        return {};
-      }}
-      onFallbackRequest={async (request) => {
-        // MCP Apps spec channel #2 (sprint 1.25): the iframe pushes
-        // structured content into the agent's NEXT-turn context via
-        // ui/update-model-context. AppRenderer doesn't have a
-        // dedicated prop for it — it surfaces via onFallbackRequest
-        // (the catch-all for JSON-RPC methods AppRenderer doesn't
-        // route specifically). We dispatch on method name.
-        //
-        // POST to /api/proxy/api/sessions/{sessionId}/iframe-context;
-        // backend writes to ADK session state under
-        // `mcp_app_context.{server_id}.{tool_name}` after passing the
-        // 7 access gates. Empty {} ack is the spec-compliant return
-        // shape — failures are logged but never propagated to the
-        // iframe (graceful degradation: agent stays blind to iframe
-        // state, but the iframe keeps working).
-        if (request.method !== "ui/update-model-context") {
-          return {};
-        }
-        const p = (request.params ?? {}) as {
-          structuredContent?: Record<string, unknown>;
-          content?: unknown[];
-        };
-        // Surface the raw push to any observer FIRST, before the sessionId
-        // gate. This is the channel standard-only widgets (the AIPLA sims)
-        // use for "the user just dragged a slider" — /dev/* pages log it here
-        // even though they have no session to POST to.
-        onModelContextUpdate?.({
-          serverId,
-          toolName: unprefixedName,
-          structuredContent: p.structuredContent ?? null,
-          content: p.content ?? null,
-        });
-        if (!sessionId) {
-          // Pre-first-turn render or /dev/* surface — nothing to POST to.
-          return {};
-        }
-        // TRUST-UI: optimistically show what the assistant is about to
-        // receive, then flip to a confirmation. Mirrors A2UISurfaceMount's
-        // action-trust strip. Cleared on 403 (skill not opted in) so opt-out
-        // skills keep the pre-trust silent behaviour.
-        const summary = summarizeStructuredContent(p.structuredContent);
-        if (showContextTrust) setContextTrust({ summary, status: "sending" });
-        try {
-          const res = await fetchWithAuth(
-            `/api/proxy/api/sessions/${encodeURIComponent(sessionId)}/iframe-context`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                serverId,
-                toolName: unprefixedName,
-                structuredContent: p.structuredContent ?? null,
-                content: p.content ?? null,
-              }),
-            },
-          );
-          if (showContextTrust) {
-            if (res.ok) {
-              setContextTrust({ summary, status: "sent" });
-            } else if (res.status === 403) {
-              // Skill hasn't opted into allow_context_writes — the push went
-              // nowhere; drop the strip rather than claim it was received.
-              setContextTrust(null);
-            } else {
-              setContextTrust({ summary, status: "error" });
-            }
-          }
-          if (!res.ok && process.env.NODE_ENV !== "production") {
-            console.info(
-              `MCPAppToolCallRouter: update-model-context POST returned ${res.status}`,
-            );
-          }
-        } catch (err) {
-          if (showContextTrust) setContextTrust({ summary, status: "error" });
-          console.warn(
-            "MCPAppToolCallRouter: update-model-context POST failed",
-            err,
-          );
-        }
-        return {};
-      }}
-      onError={(err: Error) => {
-        console.warn("MCPAppToolCallRouter: AppRenderer error", err);
-      }}
+      onMessage={handleMessage}
+      onFallbackRequest={handleFallbackRequest}
+      onError={handleError}
     />
   );
 

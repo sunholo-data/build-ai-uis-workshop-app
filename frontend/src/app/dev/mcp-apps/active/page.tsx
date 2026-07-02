@@ -16,8 +16,11 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
-import { MCPAppToolCallRouter } from "@/components/protocols/MCPAppToolCallRouter";
+import { useCallback, useEffect, useState } from "react";
+import {
+  MCPAppToolCallRouter,
+  type ModelContextUpdate,
+} from "@/components/protocols/MCPAppToolCallRouter";
 import { notificationToChatMessage } from "@/components/protocols/mcpAppNotificationAdapter";
 import {
   McpConnectionNote,
@@ -97,12 +100,43 @@ const SOURCE_META: Record<
 export default function McpAppsActivePage() {
   const [log, setLog] = useState<LogEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string>(SERVER_OPTIONS[0].id);
+  // Host-side height clamp, driven off the widget's own ui/notifications/
+  // size-changed sniffed below. Deterministic + independent of AppFrame's
+  // proxy-ready handshake (which can time out in the vendored SDK), so the
+  // iframe never sits at the 600px default. Reset on server switch.
+  const [widgetHeight, setWidgetHeight] = useState<number | null>(null);
   const { selected, devClient, connState, connError } =
     useDevMcpConnection(selectedId);
+
+  useEffect(() => {
+    setWidgetHeight(null);
+  }, [selectedId]);
 
   function appendLog(entry: Omit<LogEntry, "ts">) {
     setLog((prev) => [...prev, { ...entry, ts: Date.now() }]);
   }
+
+  // Stable handler identities (functional setState, no deps) so appending to
+  // the log doesn't re-render with fresh callbacks — which would change the
+  // router's props and remount the sandbox iframe (proxy-ready timeout + the
+  // widget resetting to 600px on every interaction).
+  const handleChatMessage = useCallback((text: string) => {
+    setLog((prev) => [
+      ...prev,
+      { ts: Date.now(), source: "iframe-bridge", translated: text },
+    ]);
+  }, []);
+
+  const handleModelContextUpdate = useCallback((u: ModelContextUpdate) => {
+    setLog((prev) => [
+      ...prev,
+      {
+        ts: Date.now(),
+        source: "iframe-model-context",
+        translated: JSON.stringify(u.structuredContent ?? u.content ?? {}),
+      },
+    ]);
+  }, []);
 
   function fireSynthetic(n: SyntheticNotification) {
     const translated = notificationToChatMessage(n.payload);
@@ -143,6 +177,15 @@ export default function McpAppsActivePage() {
       if (data.id !== undefined) return; // a request/response — handled elsewhere
       const method = data.method;
       if (typeof method !== "string") return;
+
+      if (method === "ui/notifications/size-changed") {
+        // Clamp the iframe to the height the widget reports for itself — the
+        // reliable path to a compact render (AppFrame's own auto-resize is
+        // gated on the proxy-ready handshake, which can time out).
+        const h = (data.params as { height?: unknown } | undefined)?.height;
+        if (typeof h === "number" && h > 0) setWidgetHeight(Math.ceil(h));
+        return;
+      }
 
       if (method === "ui/update-model-context") {
         const params = (data.params ?? {}) as { structuredContent?: unknown };
@@ -209,24 +252,24 @@ export default function McpAppsActivePage() {
             connError={connError}
           />
           {connState === "connected" && devClient && (
-            <MCPAppToolCallRouter
-              key={selected.id}
-              toolCalls={[selected.toolCall]}
-              mcpServerIds={[selected.serverId]}
-              devClient={devClient}
-              renderDiagnostics
-              onChatMessage={(text) =>
-                appendLog({ source: "iframe-bridge", translated: text })
+            <div
+              style={widgetHeight ? { height: `${widgetHeight}px` } : undefined}
+              className={
+                widgetHeight
+                  ? "overflow-hidden transition-[height] duration-150"
+                  : undefined
               }
-              onModelContextUpdate={(u) =>
-                appendLog({
-                  source: "iframe-model-context",
-                  translated: JSON.stringify(
-                    u.structuredContent ?? u.content ?? {},
-                  ),
-                })
-              }
-            />
+            >
+              <MCPAppToolCallRouter
+                key={selected.id}
+                toolCalls={[selected.toolCall]}
+                mcpServerIds={[selected.serverId]}
+                devClient={devClient}
+                renderDiagnostics
+                onChatMessage={handleChatMessage}
+                onModelContextUpdate={handleModelContextUpdate}
+              />
+            </div>
           )}
         </div>
       </section>

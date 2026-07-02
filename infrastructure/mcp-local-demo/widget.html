@@ -119,8 +119,18 @@
 
         // Tell the host how tall we are so the iframe fits our content —
         // AppFrame defaults to 600px and only shrinks on this notification.
+        // NB: measure BODY content, not documentElement.scrollHeight — inside a
+        // fixed-height iframe the root element fills the viewport, so
+        // documentElement.scrollHeight returns 600 (the iframe height), not the
+        // content height. body.scrollHeight is the actual content height.
         function reportSize() {
-          var h = Math.ceil(document.documentElement.scrollHeight);
+          var h =
+            Math.ceil(
+              Math.max(
+                document.body.scrollHeight,
+                document.body.getBoundingClientRect().height,
+              ),
+            ) + 4;
           notify("ui/notifications/size-changed", { height: h });
         }
 
@@ -174,7 +184,7 @@
         // Re-report size if the layout ever changes (defensive; our content is
         // fixed-height, but resizes shouldn't leave the iframe oversized).
         if (typeof ResizeObserver !== "undefined") {
-          new ResizeObserver(reportSize).observe(document.documentElement);
+          new ResizeObserver(reportSize).observe(document.body);
         }
       })();
     </script>

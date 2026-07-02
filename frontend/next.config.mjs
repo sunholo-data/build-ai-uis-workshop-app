@@ -1,7 +1,14 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
-  reactStrictMode: true,
+  // StrictMode double-invokes mount/effects in dev. @mcp-ui/client's AppFrame
+  // isn't strict-safe: the double-mount races its one-shot `sandbox-proxy-ready`
+  // handshake, producing "Timed out waiting for sandbox proxy iframe to be
+  // ready" and leaving the MCP-App iframe stuck at its 600px default (the
+  // size-auto-resize handler only attaches after proxy-ready). Disabling it
+  // makes dev behave like prod (single mount) — prod never double-invokes, so
+  // this is a dev-tooling tradeoff, not a behaviour change for shipped code.
+  reactStrictMode: false,
   env: {
     NEXT_PUBLIC_BACKEND_URL: process.env.NEXT_PUBLIC_BACKEND_URL,
   },

@@ -1,9 +1,9 @@
-# A2UI — homespun vs the protocol
+# A2UI — UI as JSON
 
-**What A2UI is:** the agent describes UI as **JSON** (a component tree), and one
-generic renderer draws it. UI becomes *data the agent emits* — not code you ship.
+**What it is:** the agent describes UI as **JSON** (a component tree) and one generic
+renderer draws it. UI is data the agent emits, not code you ship.
 
-## The homespun way (the pain)
+## The problem
 
 A hardcoded React component per UI.
 
@@ -17,56 +17,66 @@ function ContactForm() {
     </form>
   );
 }
-// ❌ Want a different form? Edit React + rebuild + redeploy.
-// ❌ Want the AGENT to decide the form at runtime? You can't — it's compiled in.
+// ❌ A different form means editing React + a redeploy.
+// ❌ The agent can't decide the UI at runtime — it's compiled in.
 ```
 
-Every new UI the agent might need = new frontend code + a deploy.
+## The protocol
 
-## With A2UI (the win)
-
-The same form is just data — a component tree the agent emits:
+The same form is a component tree the agent emits:
 
 ```jsonc
-{ "version": "v0.9",
-  "createSurface": {
-    "surfaceId": "demo", "root": "root",
-    "catalogId": "https://a2ui.org/specification/v0_9/basic_catalog.json",
-    "components": [
-      { "id": "root",  "component": "Column", "children": ["title","name","email","send"] },
-      { "id": "title", "component": "Text", "text": "Contact", "variant": "h2" },
-      { "id": "name",  "component": "TextField", "label": "Name" },
-      { "id": "email", "component": "TextField", "label": "Email" },
-      { "id": "send",  "component": "Button", "label": "Send" }
-    ] } }
+"components": [
+  { "id": "root",  "component": "Column", "children": ["title", "name", "email", "send"] },
+  { "id": "title", "component": "Text", "text": "Contact", "variant": "h2" },
+  { "id": "name",  "component": "TextField", "label": "Name" },
+  { "id": "email", "component": "TextField", "label": "Email" },
+  { "id": "send",  "component": "Button", "label": "Send" }
+]
 ```
 
-The renderer draws *any* such tree. New UI = new JSON. Zero React.
+One renderer draws any such tree. New UI = new JSON, zero React.
 
-## Try it (key-free playground — no agent needed) ⭐
+## Try it (no key)
 
-1. Run the app, open **http://localhost:3456/dev/a2ui** — it renders hand-crafted
-   A2UI payloads with **no agent run and no API key**.
-2. Open `frontend/src/app/dev/a2ui/page.tsx`, find **`PATTERN1_SEED_MESSAGES`**
-   (the A2UI JSON) and edit it:
-   - add a `Text` component to the `children` + components list,
-   - change a `text` value, or bind one to data with `{ "path": "/something" }` and
-     add that key to the `updateDataModel` message.
-3. Save — Next hot-reloads — watch the surface re-render. **You wrote zero React.**
+The playground renders one small A2UI program — a **click counter** — from JSON. You
+edit the JSON and watch it change. No agent, no key.
 
-## The point (your teach-back)
+1. Open **http://localhost:3456/dev/a2ui**. You'll see a "Click Counter" surface.
+2. Open `frontend/src/app/dev/a2ui/page.tsx` and find **`PATTERN1_SEED_MESSAGES`**. The
+   component tree lives in the **`updateComponents`** message (not `createSurface`).
+3. Make one edit inside `updateComponents.components`, save, and watch it hot-reload:
 
-> A2UI turns UI into **declarative data the agent produces**. One generic renderer
-> draws anything, so a new interface is *new JSON*, not new frontend code + a deploy.
+   **Change a label:**
+   ```ts
+   { id: "title", component: "Text", text: "My first A2UI surface", variant: "h2" },
+   ```
 
-## Going deeper (optional, advanced)
+   **Add a line of UI** (two edits):
+   ```ts
+   // 1. add "subtitle" to the root Column's children:
+   { id: "root", component: "Column", children: ["title", "subtitle", "display", "btn"] },
+   // 2. add the component itself:
+   { id: "subtitle", component: "Text", text: "Rendered from JSON — zero React" },
+   ```
 
-On `workshop-start`, the `demo-workspace` skill's surface routing is blanked.
-Restore it and prove it:
+4. Save — the surface re-renders. You wrote zero React.
 
-```bash
-git checkout workshop-start
-# fix the 🧩 marker in backend/db/local_fixture.py (default_surface), then:
-cd backend && uv run pytest tests/unit/test_demo_workspace_surface.py
-# reveal: git diff workshop-start main -- backend/db/local_fixture.py
+## The one-liner (your teach-back)
+
+> A2UI turns UI into declarative data the agent produces. One renderer draws anything,
+> so a new interface is new JSON — not new frontend code and a deploy.
+
+## Go further (optional)
+
+Bind text to data instead of a literal — still on `main`, in the same file. Point a
+component at a path, then supply it in `updateDataModel`:
+
+```ts
+// component: text now reads from the data model
+{ id: "title", component: "Text", text: { path: "/heading" }, variant: "h2" },
+// updateDataModel message: add the key to `value`
+value: { counter: 0, counterDisplay: "Clicks: 0", heading: "Bound from data" },
 ```
+
+The title now renders whatever the data model holds at `/heading`.

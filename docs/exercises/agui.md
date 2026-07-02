@@ -1,65 +1,53 @@
-# AG-UI — homespun vs the protocol
+# AG-UI — the agent's event stream
 
-**What AG-UI is:** the *transport*. The agent streams a sequence of **typed events**
-to the UI (text deltas, tool calls, state, lifecycle), and the frontend is just a
-subscriber that maps each event to React state.
+**What it is:** the transport. The agent streams **typed events** — text deltas, tool
+calls, lifecycle — and the UI just subscribes. Each event maps to React state.
 
-## The homespun way (the pain)
+## The problem
 
-Roll your own: one request, wait for the whole reply, dump it at the end.
+Roll your own: one request, wait for the whole reply, dump it.
 
 ```ts
-// You invent your own wire shape, and the user stares at a spinner until it's ALL done.
 const res = await fetch("/chat", { method: "POST", body: JSON.stringify({ message }) });
-const text = await res.text();
-setMessage(text);
-// ❌ no streaming (no token-by-token)
-// ❌ tool calls are invisible — they're buried in your bespoke response blob
-// ❌ you hand-roll SSE parsing, error handling, reconnection, your own event names
+setMessage(await res.text());
+// ❌ no streaming — the user watches a spinner
+// ❌ tool calls are invisible, buried in your response blob
+// ❌ you hand-roll SSE parsing, errors, reconnection
 ```
 
 Every app reinvents this, differently.
 
-## With AG-UI (the win)
+## The protocol
 
 Subscribe to standard typed events; the library owns the stream.
 
 ```ts
 agent.subscribe({
-  onMessagesChanged:    () => sync(),          // streamed text, token by token
-  onToolCallStartEvent: (e) => addToolChip(e), // tool calls are first-class events
-  onRunError:           (e) => showBanner(e),  // typed errors, not a parse guess
-  onRunFinished:        () => setLoading(false),
+  onMessagesChanged:    () => sync(),           // streamed text
+  onToolCallStartEvent: (e) => addToolChip(e),  // tool calls are real events
+  onRunErrorEvent:      (e) => showBanner(e),   // typed errors
+  onRunFinalized:       () => setLoading(false),
 });
 ```
 
-16 event types, ~16 callbacks. No custom protocol, no SSE plumbing.
+## Try it
 
-## Try it (read the actual wire — needs the app running + a Gemini key)
+**See it live** — needs the app running with a Gemini key:
 
-1. Open the chat at **http://localhost:3456**, send a message.
-2. DevTools → **Network** → the `stream` request → **EventStream/Response**.
-3. Watch the order:
-   `RUN_STARTED` → many `TEXT_MESSAGE_CONTENT` (deltas) → `TOOL_CALL_START/ARGS/END` →
-   `RUN_FINISHED`.
-4. Notice: the reply is **built from deltas**, and a tool call is **its own event** —
-   the UI on screen is just a projection of this stream.
+1. Open **http://localhost:3456/dev/a2ui** and click the **Click me** button.
+2. Read the **Wire log** below. Events fire in order:
+   `RUN_STARTED` → `TEXT_MESSAGE_CONTENT` (deltas) → `TOOL_CALL_START / ARGS / END` →
+   `RUN_FINISHED`. Each row says *why* it fired — click one for the raw JSON.
+3. The reply is built from deltas; a tool call is its own event. The UI is just a
+   projection of this stream.
 
-*(Bonus: `/dev/rich-media` includes an AG-UI protocol-flow diagram.)*
+**No key? Read the wiring** — no key, no branch:
 
-## The point (your teach-back)
+- Open `frontend/src/hooks/useSkillAgent.ts` and find `agent.subscribe({ … })`. Each
+  callback maps one AG-UI event to state — that's the whole integration.
+- `/dev/rich-media` has an AG-UI protocol-flow diagram.
 
-> AG-UI replaces a bespoke, per-app streaming hack with a **standard event stream**.
-> The UI doesn't parse a blob — it *subscribes* to typed events.
+## The one-liner (your teach-back)
 
-## Going deeper (optional, advanced)
-
-On the `workshop-start` branch, one line of that subscription is blanked
-(`onMessagesChanged`). Restore it and prove it:
-
-```bash
-git checkout workshop-start
-# fix the 🧩 marker in frontend/src/hooks/useSkillAgent.ts, then:
-cd frontend && npx vitest run src/hooks/__tests__/useSkillAgent.test.tsx
-# reveal: git diff workshop-start main -- frontend/src/hooks/useSkillAgent.ts
-```
+> AG-UI replaces a bespoke, per-app streaming hack with one standard typed event
+> stream. The UI subscribes to typed events — it doesn't parse a blob.

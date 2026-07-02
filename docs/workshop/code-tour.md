@@ -9,7 +9,7 @@ This is the reading map for understanding how the protocol stack actually works 
 | # | File | LOC | What it teaches |
 |---|---|---|---|
 | 1 | [`backend/app.py`](../../backend/app.py) | 61 | The simplest ADK agent that exists |
-| 2 | (Firestore seed) — `backend/db/local_fixture.py` `demo-researcher` block | ~30 | What a skill looks like as data |
+| 2 | (Firestore seed) — `backend/db/local_fixture.py` `demo-form-builder` block | ~30 | What a skill looks like as data |
 | 3 | [`backend/adk/agent.py`](../../backend/adk/agent.py) | 488 | How a skill becomes a runnable LlmAgent |
 | 4 | [`backend/skills/skill_processor.py`](../../backend/skills/skill_processor.py) | 331 | Where AG-UI events come from |
 | 5 | [`frontend/src/hooks/useSkillAgent.ts`](../../frontend/src/hooks/useSkillAgent.ts) | 463 | How the frontend reads the event stream |
@@ -30,16 +30,16 @@ The platform builds on this. Every skill is some variation of this same shape, w
 
 ---
 
-## 2. Demo skill seed (`backend/db/local_fixture.py` — `demo-researcher` entry, ~30 LOC)
+## 2. Demo skill seed (`backend/db/local_fixture.py` — `demo-form-builder` entry, ~30 LOC)
 
 Skills are **data**, not code. The agent factory reads a `SkillConfig` Pydantic model out of Firestore (or the in-memory fixture in LOCAL_MODE) and builds an agent from it.
 
-Look at the `demo-researcher` block (around line 140 in `local_fixture.py`). The fields you care about:
+Look at the `demo-form-builder` block (around line 155 in `local_fixture.py`). The fields you care about:
 
 ```python
 {
-  "skillId": "demo-researcher",
-  "displayName": "Demo Researcher",
+  "skillId": "demo-form-builder",
+  "displayName": "Demo Form Builder",
   "description": "...",        # Shown in skills picker, in A2A card
   "instructions": "...",       # System prompt for the agent
   "model": "gemini-2.5-flash", # Or claude-sonnet, gpt-4o, etc.

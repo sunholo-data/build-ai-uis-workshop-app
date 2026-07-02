@@ -8,7 +8,9 @@
  * `code-assistant` and `workspace-demo` carry tags like `experimental`,
  * `dev-tool`, `a2ui-demo` so that an aitana-admin looking at the
  * marketplace doesn't get confused about which skills are ready for
- * customer eyes vs. which are work-in-progress.
+ * customer eyes vs. which are work-in-progress. The `helper` tag is a
+ * *role* flag (not a readiness one): it marks the Workshop Helper so it
+ * reads as the in-room helper, distinct from the demo skills.
  *
  * Unknown tags are silently ignored — anything not in KNOWN_TAGS is
  * skipped rather than rendered as a noisy default badge. Skill authors
@@ -33,6 +35,10 @@ interface BadgeStyle {
 }
 
 const KNOWN_TAGS: Record<string, BadgeStyle> = {
+  helper: {
+    label: "Helper",
+    className: "border-emerald-300 bg-emerald-50 text-emerald-900",
+  },
   experimental: {
     label: "Experimental",
     className: "border-amber-300 bg-amber-50 text-amber-900",

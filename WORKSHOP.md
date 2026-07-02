@@ -34,11 +34,10 @@ runtime; no Firebase, no Firestore, no Vertex AI.
 
 ## What you get in LOCAL_MODE
 
-Three demo skills, seeded into the in-memory Firestore at startup:
+Two demo skills, seeded into the in-memory Firestore at startup:
 
 | Skill | Workshop module | What it demonstrates |
 |---|---|---|
-| **Demo Researcher** | W2 (ADK) | Plain ADK agent, AG-UI text streaming, no tools |
 | **Demo Form Builder** | W6 (A2UI) | Emits A2UI form definitions the frontend renders |
 | **Demo Map Explorer** | W7 (MCP Apps) | Placeholder — describes what cloud-mode would render |
 

@@ -29,6 +29,11 @@ describe("SkillStatusBadge", () => {
     expect(screen.getByText("A2UI demo")).toBeInTheDocument();
   });
 
+  it("renders a 'Helper' badge for the helper tag", () => {
+    render(<SkillStatusBadge tags={["helper"]} />);
+    expect(screen.getByText("Helper")).toBeInTheDocument();
+  });
+
   it("renders multiple badges when multiple known tags are present", () => {
     render(<SkillStatusBadge tags={["experimental", "a2ui-demo"]} />);
     expect(screen.getByText("Experimental")).toBeInTheDocument();

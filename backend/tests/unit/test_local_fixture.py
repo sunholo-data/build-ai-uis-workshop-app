@@ -35,12 +35,12 @@ def test_seed_populates_collections_in_local_mode(monkeypatch):
     seed_local_fixture()
     client = get_client()
     assert len(list(client.collection("users").stream())) == 1
-    # 7 demo skills: researcher (W2), form-builder (W6), map-explorer (W7),
+    # 6 seeded skills: form-builder (W6), map-explorer (W7),
     # workspace (sprint 2.9 — read-only dashboard demo),
     # workspace-interactive (sprint 2.10 follow-up — discrete-action loop),
     # click-counter (sprint 1.21 — Pattern 1 click-driven AI UI),
     # workshop-helper (Path B — RAG over the docs corpus).
-    assert len(list(client.collection("skills").stream())) == 7
+    assert len(list(client.collection("skills").stream())) == 6
     assert len(list(client.collection("documents").stream())) == 1
 
 
@@ -56,7 +56,7 @@ def test_seed_is_idempotent(monkeypatch):
     client = get_client()
     # Counts unchanged after multiple seeds.
     assert len(list(client.collection("users").stream())) == 1
-    assert len(list(client.collection("skills").stream())) == 7
+    assert len(list(client.collection("skills").stream())) == 6
 
 
 def test_seeded_skills_have_required_fields(monkeypatch):

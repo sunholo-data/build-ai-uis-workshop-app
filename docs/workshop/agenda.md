@@ -56,7 +56,7 @@ Attendees arrive having already run `make dev-local`. The room buzzes from minut
 
 ### Block 2 — ADK + AG-UI live walkthrough (30 min)
 
-**Demo skill:** `demo-researcher`
+**Demo skill:** `workshop-helper` (any streaming skill works — send it a message and watch the AG-UI stream)
 
 - Open `backend/app.py` (~50 LOC) — the root ADK agent. **Show the simplest possible agent**: just `Agent(name=..., model=..., instruction=...)`.
 - **Multi-provider routing** (1-line aside): the `model=` arg accepts `gemini-2.5-flash`, `claude-sonnet` (via `google.adk.models.Claude`), or `gpt-4o` (via `LiteLlm`). Three providers, zero provider-specific code per skill.
@@ -95,7 +95,7 @@ Attendees arrive having already run `make dev-local`. The room buzzes from minut
 
 | Path | What they build | What it exercises |
 |---|---|---|
-| **A. Custom ADK agent** | Fork `demo-researcher`. Change instructions. Add one FunctionTool (e.g. `summarise_url(url: str) -> str`). | ADK + AG-UI (by inheritance) |
+| **A. Custom ADK agent** | Copy the root agent in `backend/app.py` into a new skill. Change instructions. Add one FunctionTool (e.g. `summarise_url(url: str) -> str`). | ADK + AG-UI (by inheritance) |
 | **B. A2UI surface** | Fork `demo-form-builder`. Modify the form schema to match their use case. Add a workspace-pane render. | A2UI + multi-surface |
 | **C. MCP integration** | Pick an MCP server from `mcp-servers/...`. Add it to `tool_configs.mcp.servers` on a skill. Smoke-test in chat. | MCP + MCP Apps |
 

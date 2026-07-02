@@ -154,25 +154,6 @@ def _demo_skills(now: float) -> list[dict]:
     return [
         {
             **base,
-            "skillId": "demo-researcher",
-            "slug": "demo-researcher",
-            "displayName": "Demo Researcher",
-            "name": "demo-researcher",
-            "description": (
-                "Workshop W2 demo: a plain ADK agent that answers questions "
-                "about the platform. Streams via AG-UI, no tools."
-            ),
-            "instructions": (
-                "You are a friendly research assistant introducing workshop "
-                "attendees to the AI Protocol Platform. Keep answers short, "
-                "cite concrete examples from the codebase when possible, and "
-                "always invite the user to try one of the other demo skills "
-                "next."
-            ),
-            "initialMessage": ("Welcome! Ask me anything about the platform, ADK, or the v6 protocol stack."),
-        },
-        {
-            **base,
             "skillId": "demo-form-builder",
             "slug": "demo-form-builder",
             "displayName": "Demo Form Builder",
@@ -642,7 +623,7 @@ def _demo_skills(now: float) -> list[dict]:
                 "toolConfigs": {},
                 "subSkills": [],
             },
-            "tags": ["workshop", "demo", "helper", "rag"],
+            "tags": ["workshop", "helper", "rag"],
             "featured": True,
             "usageCount": 0,
             "createdAt": now,
@@ -732,7 +713,6 @@ def _demo_document_content() -> str:
         "It demonstrates how AG-UI, A2UI, MCP, A2A, and MCP Apps can compose "
         "into a single coherent user experience.\n\n"
         "## Try the demo skills\n\n"
-        "- **Demo Researcher** — pure ADK, streaming AG-UI text only\n"
         "- **Demo Form Builder** — emits an A2UI form for the frontend to render\n"
         "- **MCP App Demo (local)** — renders the bundled local MCP App widget inline (make dev-local, no download)\n\n"
         "Open WORKSHOP.md to see the matching code paths.\n"

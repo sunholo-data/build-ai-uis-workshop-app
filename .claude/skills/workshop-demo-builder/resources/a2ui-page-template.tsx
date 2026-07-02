@@ -30,6 +30,12 @@ const DEMO_ID = "my-demo"; // used only for the seed dedupe id below
 //  • The root component id is "root" by convention (the renderer mounts "root").
 //  • updateDataModel is { surfaceId, path, value } — NOT { surfaceId, data }.
 //    A `data` blob is ignored and every binding resolves to nothing.
+//  • Text `variant`: safe values are h1–h5 and body. DON'T use "caption" — the
+//    v0_9 catalog renders it as a literal <caption> element (only legal inside a
+//    <table>), which throws "<caption> cannot be a child of <div>" in a Column.
+//  • Don't invent props/variants. The catalog is strict: an invented prop is
+//    ignored, an invented variant can render an invalid element. When unsure,
+//    read frontend/node_modules/@a2ui/react/v0_9/index.js.
 const SEED_MESSAGES: Record<string, unknown>[] = [
   {
     version: "v0.9",

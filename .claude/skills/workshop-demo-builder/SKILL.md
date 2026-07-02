@@ -1,229 +1,211 @@
 ---
 name: workshop-demo-builder
 description: >-
-  Add or build a new /dev demo, playground, or page in this workshop app that
-  renders A2UI (declarative JSON/component-tree UI) or embeds an MCP Apps widget
-  (sandboxed iframe). This is the right skill for ANY request to create a new
-  demo built from A2UI or MCP Apps. Use whenever the user wants to add, create,
-  make, scaffold, or build a demo, playground, /dev surface, A2UI surface, or
-  MCP App widget — including phrasings like "make me a demo that renders a form
-  from A2UI JSON", "add an MCP App widget demo", "add a new playground under
-  /dev", "new /dev surface", "make a demo that does X", or "build an A2UI
-  counter/card/form". Also covers the matching exercise doc and how to register
-  the demo in the index. NOT for AG-UI, file-browser, or rich-media, which are
-  already-built fixtures.
+  Build a new workshop demo in this app from A2UI (declarative JSON UI) or MCP
+  Apps (sandboxed iframe widgets). This is the right skill for ANY request to
+  create a new demo, skill, or playground built from those protocols. Two
+  targets: (1) a real chat skill that appears at /chat/@workshop-user/<slug> and
+  emits A2UI or renders an MCP App widget live in the product chat (the default
+  — needs a Gemini key), and (2) a no-key /dev fixture page for offline
+  teaching. Use whenever the user wants to add, create, make, scaffold, or build
+  a demo, chat skill, playground, A2UI surface, or MCP App widget — including
+  "make me a demo/skill that does X", "add a skill that shows up in chat", "a
+  form in chat from A2UI", "add an MCP App widget", or "new /dev playground". NOT
+  for AG-UI, file-browser, or rich-media (already-built fixtures).
 ---
 
 # Workshop demo builder
 
-You're helping someone add a **new demo** to the `/dev` playground area of this
-workshop app. This skill is written for a fresh Claude Code session with **no
-prior knowledge of this repo** — it gives you the verified files, symbols, and
-conventions so you can build a working demo in one pass instead of
-reverse-engineering the codebase.
+You're helping someone add a **new demo** to this workshop app, built from
+**A2UI** (declarative JSON UI) or **MCP Apps** (sandboxed iframe widgets). This
+skill assumes a fresh Claude Code session with **no prior repo knowledge** — it
+gives you the verified files, symbols, and conventions to do it in one pass.
 
-Two kinds of demo are in scope:
+There are **two targets**, and they are different artifacts. Pick deliberately
+and **tell the user which one you're building and how to open it** — don't
+silently default.
 
-- **A2UI demo** — a declarative UI described as JSON that one generic renderer
-  draws. "UI is data the agent emits, not React you ship."
-- **MCP Apps demo** — an interactive widget loaded *by reference* and run in a
-  *separate-origin sandbox*, with two standard channels to talk back to the
-  agent.
-
-If the user asks for AG-UI, file-browser, or rich-media, that's **out of
-scope** — those already exist as fixtures under `/dev`; point them at
-[the dev index](../../../frontend/src/app/dev/page.tsx) instead of building new.
-
-## First: which kind, and does it need a key?
-
-Ask (or infer) two things before touching files:
-
-1. **A2UI or MCP App?** A2UI = "render this form / card / counter from JSON."
-   MCP App = "embed an interactive widget (map, slider, sim) that reports back
-   what the user did." If they want a *chart/form/layout*, it's A2UI. If they
-   want an *embedded interactive third-party-style widget*, it's an MCP App.
-2. **No-key by default.** The whole `/dev` area is designed to work **offline,
-   with no API key** — demos render from bundled fixtures. Keep it that way: the
-   default demo must render and be interactive without a Gemini key or a live
-   backend. A live agent turn is an *optional* "go further" step, never the
-   baseline. This is a hard guardrail — see [Guardrails](#guardrails).
-
-Ground yourself first: skim [the dev index](../../../frontend/src/app/dev/page.tsx)
-and the exercise docs in [docs/exercises/](../../../docs/exercises/) so the new
-demo matches house style.
-
-## Ports and how to run (verified)
-
-Everything comes up with **`make dev-local`** from the repo root (no GCP creds,
-in-memory backend):
-
-| Service | Port | Needed for |
+| | **Chat skill** (default) | **/dev fixture** (fallback) |
 |---|---|---|
-| Frontend (Next.js) | `3456` | every demo — open `http://localhost:3456/dev` |
-| Backend (FastAPI + ADK) | `1956` | only the optional live-agent "go further" step |
-| MCP sandbox proxy | `3457` | rendering an MCP App iframe (separate-origin) |
-| Local demo MCP server | `3001` | the bundled MCP App widget |
+| What | A real platform skill: an agent you chat with | A standalone frontend teaching page |
+| Where you open it | `/chat/@workshop-user/<slug>` — in the product | `http://localhost:3456/dev/<name>` |
+| Defined in | `backend/db/local_fixture.py` (`_demo_skills`) | one file under `frontend/src/app/dev/` |
+| Emits A2UI / renders widget | **live**, at runtime, via the agent | from a hand-authored seed |
+| Needs a Gemini key? | **Yes** — the agent runs a live turn | **No** — renders offline |
+| Feels like | the product; the "wow" | a fixture you read to learn the protocol |
 
-An A2UI seed-only demo needs just the frontend. An MCP App live iframe needs the
-sandbox (`3457`) and a server (`3001`). The MCP App **synthetic-button** path
-needs only the frontend — that's its no-key baseline.
+**The strong default is BOTH**, and they should reference each other: build the
+live **chat skill** (the wow) *and* a no-key **`/dev` fixture** (works offline,
+and is the artifact attendees read to learn the protocol), then cross-link them
+— the chat skill's `description` points at the fixture, the fixture's header
+comment points at the chat skill. That pair *is* a good workshop demo. Build
+**only** the `/dev` fixture when there's **no Gemini key** (the fixture is cheap
+and key-free); there's rarely a reason to ship the chat skill *without* the
+fixture. Whatever you build, say which artifacts exist and how to open each.
 
----
+If the user asks for AG-UI, file-browser, or rich-media, that's **out of scope**
+— those already exist; point them at
+[the dev index](../../../frontend/src/app/dev/page.tsx).
 
-## Pattern A — a new A2UI demo
+## First: pick target + protocol
 
-**What renders it:** a `<SurfaceRegistryProvider>` wraps the page; you mount an
-`<A2UISurfaceMount>` and seed it with hand-authored A2UI **v0.9** messages via
-`useSurfaceRegistry().appendMessages(...)`. One renderer (`@a2ui/react/v0_9`)
-draws whatever component tree you feed it.
+1. **Both, or just the /dev fixture?** With a key, build both (chat skill +
+   no-key fixture, cross-linked — see above). Without a key, build the /dev
+   fixture only.
+2. **A2UI or MCP App?** A2UI = "render a form/card/counter/layout from JSON."
+   MCP App = "embed an interactive widget (map, slider, sim) that reports back."
+3. **Key check.** The chat skill's live turn needs a Gemini key: set
+   `GOOGLE_API_KEY` (Gemini Express Mode, `GOOGLE_GENAI_USE_VERTEXAI=false`) in
+   `backend/.env`; `make dev-local` loads it. No key available? Build the /dev
+   fixture instead and say so.
 
-**Files to touch — two:**
+**Before authoring any A2UI, read the verified catalog:
+[resources/a2ui-catalog.md](resources/a2ui-catalog.md)** — all 18 `basicCatalog`
+components with props/variants, so you never grep `node_modules` or guess. Most
+important: the catalog **has `ChoicePicker` (dropdown / radio / multi-select),
+`CheckBox`, `Slider`, and `DateTimeInput`** — so "choices / a dropdown / pick one
+/ a rating / a date" uses **those**, not guided TextFields. It is not just
+Column/Row/Text/TextField/Button/Divider; don't tell the user the catalog can't
+express choices — it can.
 
-1. **New page:** copy
-   [frontend/src/app/dev/a2ui/page.tsx](../../../frontend/src/app/dev/a2ui/page.tsx)
-   to `frontend/src/app/dev/<your-name>/page.tsx`. The route is the folder name
-   (`/dev/<your-name>`). Swap the JSON, not the plumbing.
-2. **Register it:** add a `DevRoute` entry to the `PLAYGROUNDS` array in
-   [frontend/src/app/dev/page.tsx](../../../frontend/src/app/dev/page.tsx).
+Ground yourself: skim the seeded skills in
+[backend/db/local_fixture.py](../../../backend/db/local_fixture.py) (`demo-form-builder`
+= A2UI form in chat; `demo-map-explorer` = MCP App widget in chat;
+`demo-click-counter` = action-driven A2UI) and the exercise docs in
+[docs/exercises/](../../../docs/exercises/).
 
-**What to swap inside the page** (symbol names verified against the source):
+## Ports (via `make dev-local`)
 
-- `PATTERN1_SURFACE_ID`, `PATTERN1_SKILL_ID`, `PATTERN1_SESSION_ID` — rename to
-  your demo's ids.
-- `PATTERN1_SEED_MESSAGES` — the heart of it. Three v0.9 messages:
-  - `createSurface` — declares **only** `surfaceId` + `catalogId`
-    (`basicCatalog.id`). **Do not** put components here; they're silently
-    dropped and the surface renders `[Loading root...]` forever.
-  - `updateComponents` — the component tree. Root component id is `"root"` by
-    convention. Each node is `{ id, component, ... }`; containers use
-    `children: [...ids]`.
-  - `updateDataModel` — the data the bindings read. Shape is
-    `{ surfaceId, path: "/", value: {...} }` — **not** `{ surfaceId, data }`
-    (a `data` blob is ignored and bindings resolve to nothing).
-- **Data binding** is the teachable idea: a component reads a value with
-  `text: { path: "/counterDisplay" }`, and `updateDataModel`'s `value` supplies
-  `{ counterDisplay: "..." }`. At runtime the agent edits the *value*, not the
-  markup — that's the point of binding.
-
-**Simplest no-key version:** the copied page's live click needs the backend +
-the `demo-click-counter` skill. For a purely declarative no-key demo, keep the
-`Pattern1Seeder` + `<A2UISurfaceMount>` but **remove `triggerOnAction`** and the
-session-bootstrap effect, so it just seeds and renders. Add the click-driven
-agent turn back only as an optional "go further (needs a key)" step.
-
-A ready-to-fill, trimmed template is in
-[resources/a2ui-page-template.tsx](resources/a2ui-page-template.tsx). The
-component vocabulary (Column, Row, Text, Button, TextField, …) is the
-`basicCatalog`; grep `@a2ui/react` or read
-[docs/exercises/a2ui.md](../../../docs/exercises/a2ui.md) for examples.
+Frontend `3456` · Backend `1956` · MCP sandbox `3457` · Local demo MCP `3001`.
+Chat skills need the backend **and** a Gemini key. `/dev` fixtures need only the
+frontend (MCP-App iframes also need `3457` + a server).
 
 ---
 
-## Pattern B — a new MCP App demo
+## Target 1 (default) — a chat skill at `/chat/@workshop-user/<slug>`
 
-**What renders it:** `<MCPAppToolCallRouter>` takes a *fixture tool call* and an
-MCP client, finds the tool's `ui://` resource, and renders it in a sandboxed
-iframe via the sandbox proxy on `:3457`. The widget talks back on two channels
-(explained below). Both `/dev/mcp-apps/active` and `/dev/mcp-apps/passive`
-render from the **same server list**, so adding a server there gives you a demo
-on both pages for free — you usually **don't** write a new page.
+A chat skill is a dict in the list returned by `_demo_skills(now)` in
+[backend/db/local_fixture.py](../../../backend/db/local_fixture.py). Most entries
+spread a shared `base` (owner = `workshop-user`, public access, model
+`gemini-flash-lite-latest`) then set `skillId`, `slug`, `displayName`, `name`,
+`description`, `instructions`, `initialMessage`. The `slug` **is** the URL:
+`/chat/@workshop-user/<slug>` (the handle is the owner id, `workshop-user`).
 
-**Files to touch — one or two:**
+Fill-in templates (both shapes) are in
+[resources/chat-skill-fixture-template.py](resources/chat-skill-fixture-template.py).
 
-1. **Add a server option (required):** append a `ServerOption` to
-   `SERVER_OPTIONS` in
-   [frontend/src/app/dev/mcp-apps/_shared.tsx](../../../frontend/src/app/dev/mcp-apps/_shared.tsx).
-   Fields (verified): `id`, `label`, `displayUrl`, `description`, `serverId`,
-   `connect` (`{ kind: "direct", url }` for a CORS-enabled local server, or
-   `{ kind: "proxy", target }` for a CORS-blocked remote one), `toolCall` (a
-   `ToolCallState` fixture), `runHint` (a `ReactNode` telling the user how to
-   start the server / why it's blank).
-   - The `toolCall` fixture shape:
-     `{ id, name, status: "success", parentMessageId, argsJson: "{}", resultContent: "" }`.
-     `name` **must** be a tool the server exposes that binds to a `ui://`
-     resource. Empty `resultContent` is fine — the widget renders its own
-     default state from the `ui://` resource.
-2. **Add a new MCP server (optional):** only if no existing server exposes the
-   widget you want. Copy
-   [infrastructure/mcp-local-demo/](../../../infrastructure/mcp-local-demo/)
-   (`serve.ts` + `widget.html`) as the template — a stateless Streamable-HTTP
-   MCP server that serves one tool with a `ui://` resource. Wire its port into
-   [scripts/dev-local.sh](../../../scripts/dev-local.sh) so `make dev-local`
-   starts it.
+### A2UI chat skill
 
-**The two channels back to the agent** (this is what the demo should teach):
+- **No tool to declare.** `send_a2ui_json_to_client` (the A2UI emit tool,
+  [backend/adk/a2ui.py](../../../backend/adk/a2ui.py)) is available to every
+  skill — `demo-form-builder` emits A2UI with `base`'s `tools: []`.
+- The **`instructions`** are the work: spell out the exact A2UI **v0.9** tree the
+  agent must emit. Copy `demo-form-builder` (loose "build a form") or
+  `demo-click-counter` (precise, action-driven, exact tree) as the model.
+- The **same A2UI contract + gotchas** apply to the JSON the agent emits:
+  `createSurface` = only `surfaceId` + `catalogId`; root component id `"root"`;
+  `updateDataModel` = `{ surfaceId, path, value }` (not `{ data }`); bind with
+  `{ path: "/field" }`. **Text `variant`: only `h1`–`h5` and `body` are safe —
+  `caption` renders a literal `<caption>` element (illegal outside a `<table>`)
+  → a hydration error.** `Button` takes `child` + `action`, not `label`. Full
+  component vocabulary + the choices answer:
+  [resources/a2ui-catalog.md](resources/a2ui-catalog.md). Embed these same
+  constraints **in the agent's `instructions`** — the model emits the A2UI at
+  runtime, so it needs the guardrails (name the allowed components, forbid
+  `caption`, say which control to use for choices).
+- Optional: `toolConfigs.a2ui.default_surface: "workspace"` routes the surface to
+  a persistent pane instead of inline-in-chat (see `demo-workspace-interactive`).
 
-- **`app/notify` → chat turn.** The widget asks the host to take a turn; the
-  host adapter
-  [frontend/src/components/protocols/mcpAppNotificationAdapter.ts](../../../frontend/src/components/protocols/mcpAppNotificationAdapter.ts)
-  (`notificationToChatMessage`, `locationSelected`) translates it into a message
-  the user "would have typed."
-- **`ui/update-model-context` → structured state.** No chat turn — it merges
-  on-screen state into the agent's next-turn context.
+### MCP App chat skill
 
-**No-key baseline:** the `active` page's **Synthetic notifications** panel fires
-these payloads straight through the adapter with no iframe and no server — that
-works with just the frontend. The live iframe (real widget) is the "go further"
-step needing `make dev-local`.
+- Needs its **own `skillMetadata`** (not `base`'s): `tools: ["mcp"]` +
+  `toolConfigs.mcp.servers: ["<server-id>"]` (+ `allow_context_writes:
+  ["<server-id>"]` to accept the widget's write-back channel).
+- The `mcp_servers/<id>` doc must be seeded in `seed_local_fixture()` — reuse
+  `"local-demo"` (already points at `http://127.0.0.1:3001/mcp`) unless you stood
+  up your own server (copy [infrastructure/mcp-local-demo/](../../../infrastructure/mcp-local-demo/)).
+- `instructions` tell the agent to call the widget's tool (e.g. `show-demo`)
+  once. Copy `demo-map-explorer` as the model. The widget renders inline in chat
+  via `MCPAppToolCallRouter`.
 
-A ready-to-fill template is in
-[resources/mcp-server-option-template.tsx](resources/mcp-server-option-template.tsx).
+### Register + open it
+
+1. Add your dict to the `_demo_skills(now)` list.
+2. **Restart `make dev-local`.** The seeder only runs when the skills collection
+   is empty, and LOCAL_MODE's store is in-memory (resets on boot) — a fresh boot
+   re-seeds with your skill. (`backend/db/local_fixture.py:62` — `if not skills:`.)
+3. Open `http://localhost:3456/chat/@workshop-user/<slug>` and chat with it. If
+   the agent errors on the turn, it's almost always a missing/invalid Gemini key.
 
 ---
 
-## The exercise doc (do this too)
+## Target 2 (fallback) — a no-key `/dev` fixture
 
-House style: **every demo ships with a matching teaching doc** in
-[docs/exercises/](../../../docs/exercises/), following the exact shape used by
-[a2ui.md](../../../docs/exercises/a2ui.md) and
-[mcp.md](../../../docs/exercises/mcp.md):
+Use when there's no key or you want an offline, read-the-code teaching surface.
+An A2UI `/dev` page renders a **hand-authored seed** (no agent); an MCP App
+`/dev` route renders a fixture tool call. Two small steps, no backend, no key.
 
-> **the problem → the protocol → try it (no key) → teachable edit → the
-> one-liner you teach back**
+- **A2UI fixture:** copy [resources/a2ui-page-template.tsx](resources/a2ui-page-template.tsx)
+  to `frontend/src/app/dev/<name>/page.tsx` (swap the three seed messages), and
+  add a `DevRoute` to the `PLAYGROUNDS` array in
+  [frontend/src/app/dev/page.tsx](../../../frontend/src/app/dev/page.tsx). Full
+  reference: [frontend/src/app/dev/a2ui/page.tsx](../../../frontend/src/app/dev/a2ui/page.tsx).
+  Same A2UI contract + gotchas as above (incl. the `caption` trap); component
+  vocabulary in [resources/a2ui-catalog.md](resources/a2ui-catalog.md).
+- **MCP App fixture:** add a `ServerOption` to `SERVER_OPTIONS` in
+  [frontend/src/app/dev/mcp-apps/_shared.tsx](../../../frontend/src/app/dev/mcp-apps/_shared.tsx);
+  the active/passive pages pick it up. Template:
+  [resources/mcp-server-option-template.tsx](resources/mcp-server-option-template.tsx).
 
-Then add a row to the table in
-[docs/exercises/README.md](../../../docs/exercises/README.md). Keep the "try it"
-steps no-key, name the exact file + symbol the attendee edits, and end with a
-one-sentence teach-back. A copy-paste skeleton is in
+---
+
+## The exercise doc (do this for either target)
+
+Every demo ships with a teaching doc in
+[docs/exercises/](../../../docs/exercises/), following the house shape used by
+[a2ui.md](../../../docs/exercises/a2ui.md) / [mcp.md](../../../docs/exercises/mcp.md):
+**problem → protocol → try it → teachable edit → the one-liner you teach back.**
+For a chat skill the "try it" is "open `/chat/@workshop-user/<slug>` and ask X";
+for a `/dev` fixture it's the no-key edit-the-JSON path. Add a row to
+[docs/exercises/README.md](../../../docs/exercises/README.md). Skeleton:
 [resources/exercise-doc-template.md](resources/exercise-doc-template.md).
 
 ## Verify before you hand it back
 
-- Run `make dev-local`, open `http://localhost:3456/dev`, confirm your demo is
-  listed and renders **without a key**.
-- Frontend quality gate: `cd frontend && npm run quality:check:fast`
-  (lint + typecheck). Fix anything red before declaring done.
-- If you added an MCP server, confirm it starts under `make dev-local` and the
-  widget renders on `/dev/mcp-apps/passive`.
+- **Chat skill (seeded + served):** run
+  `scripts/verify-chat-skill.sh <slug>` — it curls the by-slug API with the
+  LOCAL_MODE stub token and confirms the skill resolves (no browser). A clean way
+  to catch "forgot to restart `make dev-local` after editing `local_fixture.py`."
+- **Chat skill (live turn):** open `/chat/@workshop-user/<slug>` with a key, send
+  a prompt, confirm the A2UI/widget renders. (The script above proves it exists,
+  not that the emitted A2UI parses — only a real turn does that.)
+- **/dev fixture:** open `http://localhost:3456/dev/<name>`, confirm it renders
+  with no key.
+- **Both:** `cd frontend && npm run quality:check:fast` (lint + typecheck) and,
+  for backend edits, `cd backend && make lint`. Fix anything red.
 
 ## Guardrails
 
-- **No-key / offline by default.** The demo must render and be interactive with
-  no Gemini key and no live backend. Live agent turns are optional extras.
-- **Don't leak anything.** Demos use only bundled fixtures and made-up data
-  (Munich, a click counter, a toy sim). Never wire a demo to a real customer
-  bucket, private document, or authenticated endpoint — this is a public
-  teaching app. If a demo idea needs private content, stop and reshape it around
-  a fixture.
-- **Match the teaching style.** Every demo is a *fixture you can read* — keep the
-  code explicit and narrated (the existing pages log each wire frame to the
-  console on purpose). Don't add build steps, generators, or indirection; a
-  workshop attendee should be able to open the page and understand it.
-- **Stay in scope.** A2UI and MCP Apps only. Don't rebuild AG-UI, file-browser,
-  or rich-media.
+- **Say which target you built and how to open it.** The failure that started
+  this skill was silently shipping a `/dev` fixture when the user expected a chat
+  entry. Make the choice explicit.
+- **A key gates the chat skill, not the whole demo.** If no key is available,
+  build the `/dev` fixture (no-key) and say the chat version needs a key — don't
+  fake a live agent.
+- **Don't leak.** Fixtures and made-up data only (a click counter, a toy sim,
+  Munich). Never wire a demo to a real customer bucket, private doc, or
+  authenticated endpoint — this is a public teaching app.
+- **Match the teaching style.** Demos are fixtures you can read: explicit,
+  narrated, no generators or indirection.
+- **Stay in scope:** A2UI + MCP Apps only. Not AG-UI, file-browser, or rich-media.
 
 ## Why these patterns (design docs)
 
-Point curious attendees at the specs that justify the shapes above:
-
-- A2UI click-driven pattern —
-  [docs/design/v6.1.0/implemented/action-triggered-agent-turn.md](../../../docs/design/v6.1.0/implemented/action-triggered-agent-turn.md)
-  and the workshop-demo design
-  [docs/design/v6.1.0/a2ui-workshop-demo.md](../../../docs/design/v6.1.0/a2ui-workshop-demo.md).
-- MCP Apps integration —
-  [docs/design/v6.1.0/implemented/mcp-app-integrations.md](../../../docs/design/v6.1.0/implemented/mcp-app-integrations.md).
-- Separate-origin sandbox (why the iframe can't read your cookies) —
-  [docs/design/v6.1.0/implemented/mcp-sandbox-separate-origin.md](../../../docs/design/v6.1.0/implemented/mcp-sandbox-separate-origin.md)
-  and the ops guide
-  [docs/ops/mcp-apps-iframe-guide.md](../../../docs/ops/mcp-apps-iframe-guide.md).
-- The four-protocol stack in general — the `agent-protocols` skill.
+- A2UI action-driven pattern —
+  [docs/design/v6.1.0/implemented/action-triggered-agent-turn.md](../../../docs/design/v6.1.0/implemented/action-triggered-agent-turn.md);
+  workshop demo — [docs/design/v6.1.0/a2ui-workshop-demo.md](../../../docs/design/v6.1.0/a2ui-workshop-demo.md).
+- MCP Apps —
+  [docs/design/v6.1.0/implemented/mcp-app-integrations.md](../../../docs/design/v6.1.0/implemented/mcp-app-integrations.md);
+  sandbox isolation —
+  [docs/design/v6.1.0/implemented/mcp-sandbox-separate-origin.md](../../../docs/design/v6.1.0/implemented/mcp-sandbox-separate-origin.md).
+- The four-protocol stack — the `agent-protocols` skill.

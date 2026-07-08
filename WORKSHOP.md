@@ -8,6 +8,39 @@ with **zero GCP credentials required**.
 > or developers exploring the protocol stack (ADK, AG-UI, A2UI, MCP, MCP Apps,
 > A2A) without standing up cloud infrastructure first.
 
+## Prerequisites
+
+Install these three tools first — the setup below assumes all are on your PATH:
+
+| Tool | Version | Install |
+|---|---|---|
+| **Python** | 3.11+ | [python.org](https://www.python.org/downloads/) or your OS package manager |
+| **Node.js** | 18+ | [nodejs.org](https://nodejs.org/) or `nvm install --lts` |
+| **uv** | latest | see below — the backend's Python package manager (replaces pip + venv) |
+
+Install **uv** (takes ~10 seconds):
+
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows (PowerShell) — but prefer running the whole workshop in WSL2,
+# the make targets need a POSIX shell:
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+> ⚠️ **PATH gotcha:** the installer adds uv to your PATH, but your *current*
+> terminal won't see it until you restart the shell. If `uv --version` says
+> "command not found" right after installing, either open a new terminal or
+> load it into this one:
+>
+> ```bash
+> source "$HOME/.local/bin/env"
+> ```
+>
+> Verify before continuing: `uv --version`. (`make dev` / `make install` also
+> check for uv and print this same guidance if it's missing.)
+
 ## TL;DR
 
 ```bash

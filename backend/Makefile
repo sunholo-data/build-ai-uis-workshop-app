@@ -4,9 +4,21 @@
 # ==============================================================================
 
 # Installation
+# uv is Astral's fast Python package manager — the backend uses it for every
+# command. If it's missing we install it, but the installer drops the binary
+# in ~/.local/bin (or ~/.cargo/bin) which THIS shell may not have on PATH yet.
+# So we prepend those dirs before `uv sync` — otherwise the fresh install
+# "succeeds" and the very next line dies with "uv: command not found".
 install:
-	@command -v uv >/dev/null 2>&1 || { echo "uv is not installed. Installing..."; curl -LsSf https://astral.sh/uv/install.sh | sh; }
-	uv sync
+	@command -v uv >/dev/null 2>&1 || { \
+	  echo "uv is not installed — installing (fast Python package manager, ~10s)…"; \
+	  curl -LsSf https://astral.sh/uv/install.sh | sh; \
+	  echo ""; \
+	  echo "uv installed. If a later command can't find it, your PATH isn't"; \
+	  echo "updated in this terminal yet — run:  source \"$$HOME/.local/bin/env\""; \
+	  echo "(or just open a new terminal), then re-run your command."; \
+	}
+	@PATH="$$HOME/.local/bin:$$HOME/.cargo/bin:$$PATH" uv sync
 
 # ==============================================================================
 # Development

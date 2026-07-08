@@ -14,6 +14,13 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# Fail fast with a friendly message if uv (the backend's package manager)
+# isn't installed or isn't on PATH — otherwise `uv run` below dies with a
+# bare "command not found" and takes the frontend down with it.
+# shellcheck source=scripts/lib/check-uv.sh
+. "$REPO_ROOT/scripts/lib/check-uv.sh"
+require_uv
+
 # Force-set both vars — GCP_PROJECT shadows GOOGLE_CLOUD_PROJECT in
 # db/firestore.py, and the shell may already have GCP_PROJECT pointing at
 # a different project (e.g. multivac-internal-dev). Always use dev here.

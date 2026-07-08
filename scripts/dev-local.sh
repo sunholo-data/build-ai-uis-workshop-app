@@ -28,6 +28,13 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# Fail fast with a friendly message if uv (the backend's package manager)
+# isn't installed or isn't on PATH — otherwise `uv run` below dies with a
+# bare "command not found" and takes the frontend down with it.
+# shellcheck source=scripts/lib/check-uv.sh
+. "$REPO_ROOT/scripts/lib/check-uv.sh"
+require_uv
+
 # ─── LOCAL_MODE pinning ─────────────────────────────────────────────────────
 export LOCAL_MODE=1
 export NEXT_PUBLIC_LOCAL_MODE=1

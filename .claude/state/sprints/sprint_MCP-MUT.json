@@ -1,0 +1,82 @@
+{
+  "sprint_id": "MCP-MUT",
+  "created": "2026-07-04T10:43:38Z",
+  "estimated_duration_days": 0.5,
+  "design_doc": "docs/design/v6.5.0/mcp-app-mutation-round-trip.md",
+  "sprint_plan": "docs/design/v6.5.0/mcp-app-mutation-round-trip-sprint.md",
+  "features": [
+    {
+      "id": "M1-backend-action-tool",
+      "description": "Add module-level counter + increment-counter DATA tool (widgetAccessible) + handler to serve.ts; remove misplaced widgetAccessible from show-demo.",
+      "scope": "backend",
+      "estimated_loc": 25,
+      "actual_loc": 35,
+      "dependencies": [],
+      "acceptance_criteria": [
+        "npm run lint clean in infrastructure/mcp-local-demo/",
+        "After :3001 restart, verify-tunnel.sh <url> increment-counter '{\"by\":1}' twice returns counter 1 then 2 (module-level state survives per-request Server instances)",
+        "tools/list includes increment-counter; show-demo no longer carries openai/widgetAccessible"
+      ],
+      "files_to_create": [],
+      "files_to_modify": ["infrastructure/mcp-local-demo/serve.ts"],
+      "passes": true,
+      "started": "2026-07-04",
+      "completed": "2026-07-04",
+      "notes": "Verified: counter 1 then 2 across stateless per-request Servers; increment-counter carries widgetAccessible=true; show-demo + Greet no longer carry the flag. lint clean."
+    },
+    {
+      "id": "M2-widget-plus-one-callTool",
+      "description": "Add +1 button + count readout + incrementCounter() with feature-detected host tool-call (window.openai.callTool, then window.openai.mcp.*, then SEP-1865 app.callServerTool, else no-op). Render structuredContent.counter. Additive — notify slider untouched.",
+      "scope": "frontend",
+      "estimated_loc": 30,
+      "actual_loc": 62,
+      "dependencies": ["M1-backend-action-tool"],
+      "acceptance_criteria": [
+        "No window.openai reference throws when the object is absent (guarded + try/catch)",
+        "Widget still renders and the notify slider still emits ui/update-model-context",
+        "On a window.openai host, clicking +1 calls increment-counter and renders the returned count"
+      ],
+      "files_to_create": [],
+      "files_to_modify": ["infrastructure/mcp-local-demo/widget.html"],
+      "passes": true,
+      "started": "2026-07-04",
+      "completed": "2026-07-04",
+      "notes": "Inline JS parses (node --check). Served widget has +1 button, count readout, incrementCounter, callServerTool with oa.callTool + oa.mcp.callTool + app.callServerTool feature-detect + clean no-op. Regression: Greet + slider notify path intact. LIVE ChatGPT click-check is a pending manual step (needs connector refresh)."
+    },
+    {
+      "id": "M3-mirror-scaffold-and-docs",
+      "description": "Mirror serve.ts + widget.html edits into the mcp-app-deploy-test skill scaffold; add a 'widget calls a tool' section to resources/host-compliance.md; update scaffold header comment.",
+      "scope": "fullstack",
+      "estimated_loc": 15,
+      "actual_loc": 40,
+      "dependencies": ["M1-backend-action-tool", "M2-widget-plus-one-callTool"],
+      "acceptance_criteria": [
+        "validate_skill.sh mcp-app-deploy-test passes",
+        "Scaffold boots in a temp copy and verify-tunnel.sh <url> increment-counter works there too",
+        "host-compliance.md has a widget-calls-a-tool (callTool <-> app.callServerTool) section"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "/Users/mark/.claude/skills/mcp-app-deploy-test/resources/scaffold/serve.ts",
+        "/Users/mark/.claude/skills/mcp-app-deploy-test/resources/scaffold/widget.html",
+        "/Users/mark/.claude/skills/mcp-app-deploy-test/resources/host-compliance.md"
+      ],
+      "passes": true,
+      "started": "2026-07-04",
+      "completed": "2026-07-04",
+      "notes": "Scaffold mirrored + typechecks + widget JS parses; temp-copy round-trip by:1->1, by:5->6 (by respected, state persists). host-compliance.md gained a 'Third channel — mutation round-trip' section. Scaffold header updated to 'three tools'. Skill validates."
+    }
+  ],
+  "velocity": {
+    "target_loc_per_day": 140,
+    "actual_loc_per_day": null,
+    "estimated_total_loc": 70,
+    "actual_total_loc": 137,
+    "estimated_days": 0.5,
+    "actual_days": null
+  },
+  "github_issues": [],
+  "last_session": "2026-07-04",
+  "last_checkpoint": "M3 complete; all automated acceptance green; live ChatGPT +1 click-check pending (manual)",
+  "status": "completed"
+}

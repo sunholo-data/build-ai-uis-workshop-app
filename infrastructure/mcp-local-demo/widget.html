@@ -15,6 +15,12 @@
 
   The ~20-line JSON-RPC-over-postMessage helper is inlined per the MCP Apps
   spec ("you don't need an SDK to talk MCP with the host").
+
+  DUAL HOST: the same widget also runs in ChatGPT dev mode, which injects a
+  window.openai bridge instead of the postMessage one. When window.openai is
+  present the two channels map onto it — slider → setWidgetState, button →
+  sendFollowUpMessage — otherwise they use the MCP Apps postMessage path above.
+  See ../serve.ts for the matching dual tool/resource metadata.
 -->
 <html lang="en">
   <head>
@@ -73,16 +79,22 @@
       <button id="ask" type="button">Ask the agent about this →</button>
     </div>
 
+    <div class="row">
+      <button id="plus" type="button">+1</button>
+      <span class="readout">server counter: <span id="count">0</span></span>
+    </div>
+
     <p class="hint">
-      Slider → <code>ui/update-model-context</code> (violet in the log). Button →
-      <code>ui/message</code> / <code>app/notify</code> (blue).
+      Slider → <code>ui/update-model-context</code> · Ask →
+      <code>ui/message</code> · +1 → <code>callTool</code> (mutation round-trip:
+      the server increments and returns the new count).
     </p>
 
     <script>
       (function () {
         var nextId = 1;
-        var initialized = false;
 
+        // --- MCP Apps postMessage bridge (this app's host) -----------------
         function post(msg) {
           try {
             parent.postMessage(msg, "*");
@@ -117,9 +129,155 @@
           }
         });
 
+        // --- Host detection ------------------------------------------------
+        // ChatGPT (Apps SDK) injects window.openai; this app speaks MCP Apps
+        // over postMessage. The widget works under BOTH — pick the channel at
+        // call time (window.openai may be injected slightly after load).
+        function openai() {
+          return typeof window !== "undefined" ? window.openai : undefined;
+        }
+
+        var slider = document.getElementById("theta");
+        var out = document.getElementById("out");
+        var hint = document.querySelector(".hint");
+        var debounce;
+
+        // Channel #1 — silent, model-visible on the next turn: the slider value.
+        //   ChatGPT  → window.openai.setWidgetState
+        //   MCP Apps → ui/update-model-context (a REQUEST, not a notification:
+        //              that's the channel the host actually surfaces — in chat
+        //              it POSTs /iframe-context so the AGENT sees the value; on
+        //              /dev it fires onModelContextUpdate).
+        function pushAngle(value) {
+          var oa = openai();
+          if (oa && oa.setWidgetState) {
+            try {
+              oa.setWidgetState({ control: "launch-angle", thetaDegrees: value });
+            } catch (e) {
+              /* ignore — best effort */
+            }
+          } else {
+            request("ui/update-model-context", {
+              structuredContent: { control: "launch-angle", thetaDegrees: value },
+            });
+          }
+        }
+
+        // Channel #2 — surfaces to the conversation: the button.
+        //   ChatGPT  → window.openai.sendFollowUpMessage (injects a user turn)
+        //   MCP Apps → ui/message / app/notify (an adapter turns it into a
+        //              chat string)
+        function askAgent() {
+          var v = Number(slider.value);
+          var oa = openai();
+          if (oa && oa.sendFollowUpMessage) {
+            try {
+              oa.sendFollowUpMessage({
+                prompt:
+                  "The launch angle is " + v + "°. What trajectory does that give?",
+              });
+            } catch (e) {
+              /* ignore — best effort */
+            }
+          } else {
+            request("ui/message", {
+              type: "app/notify",
+              reason: "location-selected",
+              payload: { location: "the local demo widget", thetaDegrees: v },
+            });
+          }
+        }
+
+        var countEl = document.getElementById("count");
+
+        // Channel #3 — the MUTATION round-trip: the widget CALLS a server tool,
+        // the server mutates state + returns the new value, we render it. This is
+        // DETERMINISTIC (unlike Channel #2, sendFollowUpMessage, which just asks
+        // the model). Host tool-call API, feature-detected at call time:
+        //   ChatGPT / Copilot → window.openai.callTool(name, args)
+        //                       (workshop hint: MAY be exposed as window.openai.mcp.*)
+        //   SEP-1865 host     → an injected MCP Apps client's app.callServerTool
+        //   no bridge         → clean no-op (the button simply doesn't fire)
+        function callServerTool(name, args) {
+          var oa = openai();
+          if (oa) {
+            if (typeof oa.callTool === "function") return oa.callTool(name, args);
+            if (oa.mcp && typeof oa.mcp.callTool === "function")
+              return oa.mcp.callTool(name, args);
+          }
+          var app =
+            typeof window !== "undefined" ? window.mcpApp || window.app : undefined;
+          if (app && typeof app.callServerTool === "function")
+            return app.callServerTool({ name: name, arguments: args });
+          // TODO(SEP-1865): the raw widget→tools/call postMessage wire is not yet
+          // hand-rolled — confirm the method against the vendored MCP Apps spec
+          // (agent-protocols skill) before wiring. Until then non-openai hosts no-op.
+          return Promise.resolve(undefined);
+        }
+
+        // The tool result shape varies by host — accept structuredContent.counter
+        // or a bare counter, and just ignore anything else (graceful).
+        function renderCount(result) {
+          var n;
+          if (
+            result &&
+            result.structuredContent &&
+            typeof result.structuredContent.counter === "number"
+          ) {
+            n = result.structuredContent.counter;
+          } else if (result && typeof result.counter === "number") {
+            n = result.counter;
+          }
+          if (typeof n === "number" && countEl) countEl.textContent = String(n);
+        }
+
+        function incrementCounter() {
+          Promise.resolve()
+            .then(function () {
+              return callServerTool("increment-counter", { by: 1 });
+            })
+            .then(renderCount)
+            .catch(function () {
+              /* host may deny / approval-gate the call — best effort */
+            });
+        }
+
+        slider.addEventListener("input", function () {
+          var v = Number(slider.value);
+          out.textContent = v + "°";
+          clearTimeout(debounce);
+          debounce = setTimeout(function () {
+            pushAngle(v);
+          }, 150);
+        });
+
+        document.getElementById("ask").addEventListener("click", askAgent);
+        document.getElementById("plus").addEventListener("click", incrementCounter);
+
+        // Once we know the host: adapt the caption + restore any prior state.
+        function applyHost() {
+          var oa = openai();
+          if (!oa) return;
+          if (hint) {
+            hint.innerHTML =
+              "Slider → <code>setWidgetState</code> · Ask → " +
+              "<code>sendFollowUpMessage</code> · +1 → <code>callTool</code> " +
+              "(server mutates, returns the count).";
+          }
+          var st = oa.widgetState;
+          if (st && typeof st.thetaDegrees === "number") {
+            slider.value = st.thetaDegrees;
+            out.textContent = st.thetaDegrees + "°";
+          }
+        }
+        // window.openai can arrive after load — react to its (re)injection.
+        window.addEventListener("openai:set_globals", applyHost);
+        applyHost();
+
         // Tell the host how tall we are so the iframe fits our content —
         // AppFrame defaults to 600px and only shrinks on this notification.
-        // NB: measure BODY content, not documentElement.scrollHeight — inside a
+        // Harmless under ChatGPT (it ignores these postMessages). NB: measure
+        // BODY content, not documentElement.scrollHeight — inside a
         // fixed-height iframe the root element fills the viewport, so
         // documentElement.scrollHeight returns 600 (the iframe height), not the
         // content height. body.scrollHeight is the actual content height.
@@ -134,38 +292,6 @@
           notify("ui/notifications/size-changed", { height: h });
         }
 
-        var slider = document.getElementById("theta");
-        var out = document.getElementById("out");
-        var debounce;
-
-        // update-model-context is sent as a REQUEST (has an id), not a
-        // notification. That's the channel the host actually surfaces: in chat
-        // it drives the POST to /iframe-context so the AGENT sees the value on
-        // its next turn; on /dev it fires onModelContextUpdate. (A notification
-        // would reach neither — only a raw wire sniffer.)
-        function pushAngle(value) {
-          request("ui/update-model-context", {
-            structuredContent: { control: "launch-angle", thetaDegrees: value },
-          });
-        }
-
-        slider.addEventListener("input", function () {
-          var v = Number(slider.value);
-          out.textContent = v + "°";
-          clearTimeout(debounce);
-          debounce = setTimeout(function () {
-            pushAngle(v);
-          }, 150);
-        });
-
-        document.getElementById("ask").addEventListener("click", function () {
-          request("ui/message", {
-            type: "app/notify",
-            reason: "location-selected",
-            payload: { location: "the local demo widget" },
-          });
-        });
-
         // Best-effort MCP Apps handshake, THEN report size + announce initial
         // state (so pushes go out once the bridge is ready). Timeout fallback
         // keeps the widget working even if the host is slow to answer init.
@@ -176,7 +302,6 @@
           }),
         ]).then(function () {
           notify("ui/notifications/initialized", {});
-          initialized = true;
           reportSize();
           pushAngle(Number(slider.value));
         });

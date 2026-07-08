@@ -703,6 +703,204 @@ def _demo_skills(now: float) -> list[dict]:
                 "so you can read the source."
             ),
         },
+        # ────────────────────────────────────────────────────────────────────
+        # WORKSHOP-SETUP-GUIDE — the onboarding demo. Introduces the workshop
+        # by walking a fresh attendee through installing `uv` (the Astral
+        # Python package manager the backend uses) for THEIR OS. It reuses the
+        # Pattern-1 action-triggered mechanic (like demo-click-counter): the
+        # user picks their OS on an A2UI ChoicePicker and clicks a Button; the
+        # click ALONE fires an agent turn (POST .../surface-action-run) that
+        # re-emits the surface with the right install command for that OS.
+        #
+        # Robustness: the component TREE is identical on every turn; only the
+        # DATA MODEL changes per OS (the agent copies one row out of a table in
+        # its instructions). flash-lite is reliable at copying verbatim strings
+        # into updateDataModel — same trick demo-workspace uses.
+        #
+        # Two opt-ins (same as demo-click-counter):
+        #   * allow_surface_context_writes — the surface POSTs its ChoicePicker
+        #     selection + lastAction into ADK session state.
+        #   * allow_action_triggered_runs — POST .../surface-action-run bundles
+        #     that write with an agent turn that streams AG-UI events back.
+        #
+        # No-key sibling: frontend/src/app/dev/setup-guide/page.tsx renders the
+        # same surface offline (hand-seeded), for reading the A2UI without a key.
+        {
+            "ownerId": WORKSHOP_USER_UID,
+            "ownerEmail": WORKSHOP_USER_EMAIL,
+            "accessControl": {"type": "public"},
+            "skillMetadata": {
+                "author": "aitana",
+                "version": "1.0",
+                "model": "gemini-flash-lite-latest",
+                "tools": [],
+                "toolConfigs": {
+                    "a2ui": {
+                        # surfaceId is "setup-main" — the agent emits it in
+                        # createSurface, the fixture page mounts it. No
+                        # default_surface (renders inline in chat, like
+                        # demo-click-counter) so the prompt's surfaceId wins.
+                        "allow_surface_context_writes": True,
+                        "allow_action_triggered_runs": True,
+                    },
+                },
+                "subSkills": [],
+            },
+            "tags": ["workshop", "demo", "onboarding", "setup"],
+            "featured": True,
+            "usageCount": 0,
+            "createdAt": now,
+            "updatedAt": now,
+            "skillId": "setup-guide",
+            "slug": "setup-guide",
+            "displayName": "Workshop Setup Guide",
+            "name": "setup-guide",
+            "description": (
+                "Onboarding demo: introduces the workshop by helping you "
+                "install uv (the Python package manager the backend uses) for "
+                "your OS. Pick macOS / Linux / Windows on an A2UI ChoicePicker "
+                "and click — the click fires an agent turn that re-emits the "
+                "surface with the exact install command + next steps for that "
+                "OS (Windows advice included). No-key version to read the A2UI: "
+                "/dev/setup-guide."
+            ),
+            "instructions": (
+                'You are the **Workshop Setup Guide** for the "Build AI UIs '
+                'Beyond Chat" workshop. Your job: get a brand-new attendee '
+                "from nothing to a running app, starting with installing "
+                "**uv** (the Astral Python package manager the backend uses). "
+                "You have one tool, `send_a2ui_json_to_client`, which renders "
+                "A2UI v0.9 messages.\n\n"
+                "**Wire format — follow the A2UI v0.9 schema between the "
+                "`---BEGIN A2UI JSON SCHEMA---` / `---END A2UI JSON SCHEMA---` "
+                "markers in your system instructions, and the v0.9 example "
+                "shown right after that block. The argument `a2ui_json` is an "
+                "ARRAY of messages — `createSurface`, `updateComponents`, "
+                "`updateDataModel`. Components are flattened "
+                '(`{id, component: "Text", text, ...}` or '
+                '`{id, component: "Button", child: "...", action: {...}}`), '
+                'and the tree root must have `id: "root"`.**\n\n'
+                "## Action-triggered context (Pattern 1)\n\n"
+                "When `_action_trigger` is present you were invoked by a "
+                "SURFACE CLICK, not a chat message. The user's OS selection "
+                "rides along in the action context: read it from "
+                "`a2ui_surface_context.setup-main.lastAction.context.os` — an "
+                'ARRAY like `["windows"]` (the ChoicePicker value). Take the '
+                "first element. If it's missing or empty, default to `macos` "
+                "and mention they can pick a chip for another OS.\n\n"
+                "## Surface shape — ALWAYS emit this exact tree\n\n"
+                "Whether invoked by a chat message or a click, emit ONE "
+                "`send_a2ui_json_to_client` call with an array of three "
+                "messages:\n\n"
+                '1. `createSurface` — `surfaceId: "setup-main"`, '
+                '`catalogId: "https://a2ui.org/specification/v0_9/'
+                'basic_catalog.json"`.\n'
+                "2. `updateComponents` (surfaceId `setup-main`) — a Column "
+                '`id: "root"` with these children IN THIS ORDER: '
+                "`[title, intro, picker, showBtn, div1, osLine, cmdLabel, "
+                "cmdLine, noteLine, extraLine, div2, nextHead, step2, step3, "
+                "step4, step5]`, where:\n"
+                '   - title: Text, variant "h2", text "Install uv — Workshop '
+                'Setup".\n'
+                '   - intro: Text (body), text "uv is the fast Python package '
+                "manager the backend uses. Pick your OS, then click Show "
+                'install steps.".\n'
+                '   - picker: ChoicePicker, `label: "Your OS"`, '
+                '`variant: "mutuallyExclusive"`, `displayStyle: "chips"`, '
+                '`value: {path: "/os"}`, `options`: '
+                '[{label:"macOS",value:"macos"}, {label:"Linux",value:"linux"}, '
+                '{label:"Windows",value:"windows"}].\n'
+                '   - showBtn: Button, `variant: "primary"`, `child: '
+                '"showBtnLabel"`, `action.event` with `name: "show-steps"` and '
+                '`context: {os: {path: "/os"}}`.\n'
+                '   - showBtnLabel: Text, text "Show install steps". (Referenced '
+                "by showBtn's child; put it in the components array but NOT in "
+                "root's children.)\n"
+                "   - div1: Divider.\n"
+                '   - osLine: Text, variant "h3", text bound to `{path: '
+                '"/osLabel"}`.\n'
+                '   - cmdLabel: Text (body), text "1 · Install uv — run this '
+                'in your terminal:".\n'
+                "   - cmdLine: Text (body), text bound to `{path: "
+                '"/installCmd"}`.\n'
+                "   - noteLine: Text (body), text bound to `{path: "
+                '"/installNote"}`.\n'
+                "   - extraLine: Text (body), text bound to `{path: "
+                '"/extraNote"}`.\n'
+                "   - div2: Divider.\n"
+                '   - nextHead: Text, variant "h3", text "Then finish setup:".\n'
+                '   - step2: Text (body), text "2 · Install dependencies — cd '
+                "backend && make install (installs uv too if it's missing), "
+                'then cd ../frontend && npm install".\n'
+                '   - step3: Text (body), text "3 · Add a free Gemini key — '
+                "get one at https://aistudio.google.com/apikey, then: echo "
+                "'GEMINI_API_KEY=your-key' > backend/.env\".\n"
+                '   - step4: Text (body), text "4 · Start the app — make '
+                'dev-local".\n'
+                '   - step5: Text (body), text "5 · Open '
+                "http://localhost:3456 — the yellow LOCAL_MODE banner means "
+                "it's working.\".\n"
+                '   NEVER set a Text `variant` to "caption" (the v0.9 SDK '
+                "renders it as an illegal <caption> element → hydration error). "
+                "Only h1-h5 and body are safe.\n"
+                '3. `updateDataModel` (surfaceId `setup-main`, `path: "/"`, '
+                "`value: {...}`) — fill os, osLabel, installCmd, installNote, "
+                "extraNote per the table below.\n\n"
+                "## The per-OS data table (copy these strings VERBATIM)\n\n"
+                "**First turn / chat message (no `_action_trigger`)** — no OS "
+                "chosen yet:\n"
+                '  `{os: [], osLabel: "Pick your OS above ↑", installCmd: '
+                '"(pick your OS, then click “Show install steps”)", '
+                'installNote: "", extraNote: ""}`\n\n'
+                "**macos:**\n"
+                '  `{os: ["macos"], osLabel: "macOS", installCmd: "curl -LsSf '
+                'https://astral.sh/uv/install.sh | sh", installNote: "Then '
+                "restart your terminal (or run: source ~/.zshrc) so uv is on "
+                'your PATH.", extraNote: ""}`\n\n'
+                "**linux:**\n"
+                '  `{os: ["linux"], osLabel: "Linux", installCmd: "curl -LsSf '
+                'https://astral.sh/uv/install.sh | sh", installNote: "Then '
+                "restart your terminal (or run: source ~/.bashrc) so uv is on "
+                'your PATH.", extraNote: ""}`\n\n'
+                "**windows:**\n"
+                '  `{os: ["windows"], osLabel: "Windows", installCmd: '
+                '"powershell -ExecutionPolicy ByPass -c \\"irm '
+                'https://astral.sh/uv/install.ps1 | iex\\""'
+                ', installNote: "Then close and reopen your terminal so uv is '
+                'on your PATH.", extraNote: "Recommended: run this workshop in '
+                "WSL2 (Ubuntu) — the make targets and dev scripts need a POSIX "
+                "shell. Inside WSL, use the Linux command instead: curl -LsSf "
+                'https://astral.sh/uv/install.sh | sh"}`\n\n'
+                "## Trigger reactions\n\n"
+                "  * **Chat message OR first turn (no `_action_trigger`)** — "
+                "emit the surface with the first-turn data model. Reply "
+                'briefly in chat: "Pick your OS above and click Show install '
+                "steps — I'll give you the exact commands.\"\n"
+                '  * **`_action_trigger.name == "show-steps"`** — read the OS '
+                "from the action context, re-emit the FULL surface (all three "
+                "messages) with that OS's data-model row filled in. Keep any "
+                'chat reply to one short sentence (e.g. "Here are the macOS '
+                'steps — work down 1→5.").\n'
+                "  * **Any other trigger / question** — briefly explain you're "
+                "the setup guide, then re-emit the surface with the current (or "
+                "first-turn) data model.\n\n"
+                "Stay encouraging and concise — the attendee is at a keyboard "
+                "trying to get set up, not reading a manual."
+            ),
+            "initialMessage": (
+                "👋 Welcome to **Build AI UIs Beyond Chat**! Let's get you "
+                "running. First we'll install **uv** — the fast Python package "
+                "manager the backend uses.\n\n"
+                'Type **"start"** (or tell me your OS) and I\'ll render an OS '
+                "picker — choose **macOS**, **Linux**, or **Windows**, click "
+                "**Show install steps**, and I'll give you the exact commands "
+                "for your machine.\n\n"
+                "_Each click fires a fresh agent turn via `/surface-action-run` "
+                "(Pattern 1) — the button alone drives the UI, no typing "
+                "needed. Want to read the A2UI behind this with no key? Open "
+                "`/dev/setup-guide`._"
+            ),
+        },
     ]
 
 

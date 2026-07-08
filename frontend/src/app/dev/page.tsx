@@ -24,6 +24,13 @@ interface DevRoute {
 
 const PLAYGROUNDS: DevRoute[] = [
   {
+    href: "/dev/setup-guide",
+    title: "Workshop Setup Guide (A2UI)",
+    blurb:
+      "The install-uv onboarding card as a hand-seeded A2UI surface: OS picker + per-OS install command + next steps. Read the JSON, edit the data model (try the Windows row) to see data binding. Live clickable version is the setup-guide chat skill.",
+    needs: "nothing — the seed renders offline",
+  },
+  {
     href: "/dev/a2ui",
     title: "A2UI × AG-UI playground",
     blurb:
